@@ -63,6 +63,7 @@ jobs:
             gcc \
             git \
             libeigen3-dev \
+            libfl-dev \
             libfmt-dev \
             swig \
             tcl-dev \
