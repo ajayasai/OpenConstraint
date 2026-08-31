@@ -94,6 +94,7 @@ jobs:
             -S opensta \
             -B opensta/build \
             -DCMAKE_BUILD_TYPE=RELEASE \
+            -DBUILD_TESTS=OFF \
             -DCUDD_DIR="$PWD/cudd-3.0.0"
           cmake --build opensta/build --parallel "$(nproc)"
           opensta/build/sta -version
