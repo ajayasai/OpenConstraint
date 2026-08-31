@@ -8,6 +8,7 @@ on:
       - "examples/tiny/**"
       - "pyproject.toml"
       - "src/openconstraint/**"
+      - "tests/fixtures/opensta/**"
       - "tests/test_opensta.py"
   pull_request:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - "examples/tiny/**"
       - "pyproject.toml"
       - "src/openconstraint/**"
+      - "tests/fixtures/opensta/**"
       - "tests/test_opensta.py"
   schedule:
     - cron: "17 5 * * 5"
@@ -105,34 +107,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e "." "jsonschema>=4.23"
 
-      - name: Prepare round-trip-stable trusted fixture
-        shell: python
-        run: |
-          from pathlib import Path
-
-          Path("opensta-roundtrip.sdc").write_text(
-              """create_clock -name core_clk -period 10 -waveform {0 4} [get_ports clk]
-          set_input_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports scan_clk]
-          set_input_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports rst_n]
-          set_input_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports scan_en]
-          set_input_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports {din[0]}]
-          set_input_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports {din[1]}]
-          set_output_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports {dout[0]}]
-          set_output_delay 2.0 -clock [get_clocks core_clk] -add_delay [get_ports {dout[1]}]
-          """,
-              encoding="utf-8",
-              newline="\n",
-          )
-
       - name: Audit trusted fixture through real OpenSTA
         shell: bash
         run: |
           set -euo pipefail
           openconstraint audit \
-            --verilog examples/tiny/design.v \
-            --liberty examples/tiny/cells.lib \
-            --sdc opensta-roundtrip.sdc \
-            --top tiny_top \
+            --verilog tests/fixtures/opensta/roundtrip.v \
+            --liberty tests/fixtures/opensta/roundtrip.lib \
+            --sdc tests/fixtures/opensta/roundtrip.sdc \
+            --top opensta_roundtrip \
             --opensta \
             --opensta-bin "$PWD/opensta/build/sta" \
             --fail-on never \
@@ -143,6 +126,7 @@ jobs:
         shell: python
         run: |
           import json
+          import re
           from importlib import resources
           from pathlib import Path
 
@@ -155,12 +139,13 @@ jobs:
               .read_text(encoding="utf-8")
           )
           Draft202012Validator(schema).validate(report)
+          sha256_pattern = re.compile(r"[0-9a-f]{64}")
 
           expected_components = {
-              "sequential_endpoints": {"covered": 2, "total": 2, "percentage": 100.0, "weight": 0.5},
-              "input_delays": {"covered": 20, "total": 20, "percentage": 100.0, "weight": 0.2},
-              "output_delays": {"covered": 8, "total": 8, "percentage": 100.0, "weight": 0.2},
-              "query_health": {"covered": 15, "total": 15, "percentage": 100.0, "weight": 0.1},
+              "sequential_endpoints": {"covered": 1, "total": 1, "percentage": 100.0, "weight": 0.5},
+              "input_delays": {"covered": 4, "total": 4, "percentage": 100.0, "weight": 0.2},
+              "output_delays": {"covered": 4, "total": 4, "percentage": 100.0, "weight": 0.2},
+              "query_health": {"covered": 5, "total": 5, "percentage": 100.0, "weight": 0.1},
           }
 
           def verify_complete_coverage(coverage):
@@ -178,10 +163,37 @@ jobs:
           assert report["summary"]["errors"] == 0, report["summary"]
           assert report["summary"]["warnings"] == 0, report["summary"]
           assert report["summary"]["notes"] == 0, report["summary"]
+          assert report["design"] == {
+              "top": "opensta_roundtrip",
+              "ports": 3,
+              "nets": 3,
+              "instances": 1,
+              "sequential_instances": 1,
+              "sequential_endpoints": 1,
+              "parser_warnings": [],
+          }, report["design"]
           assert len(report["modes"]) == 1, report["modes"]
           static_mode = report["modes"][0]
           assert static_mode["name"] == "default", static_mode
           assert static_mode["diagnostics"] == [], static_mode
+          assert len(static_mode["io_delays"]) == 2, static_mode["io_delays"]
+          assert len(static_mode["clocks"]) == 1, static_mode["clocks"]
+          clock = static_mode["clocks"][0]
+          assert {
+              "name": clock["name"],
+              "targets": clock["targets"],
+              "period": clock["period"],
+              "waveform": clock["waveform"],
+              "waveform_explicit": clock["waveform_explicit"],
+              "generated": clock["generated"],
+          } == {
+              "name": "core_clk",
+              "targets": ["clk"],
+              "period": 10.0,
+              "waveform": [0.0, 4.0],
+              "waveform_explicit": True,
+              "generated": False,
+          }, clock
           verify_complete_coverage(static_mode["coverage"])
 
           evidence = report["summary"]["opensta"]
@@ -194,13 +206,15 @@ jobs:
           assert mode["return_code"] == 0, mode
           assert mode["timed_out"] is False, mode
           assert mode["duration_seconds"] >= 0, mode
-          assert len(mode["effective_sdc_sha256"]) == 64, mode
+          assert "unconstrained endpoint" not in (mode["stdout"] + mode["stderr"]).lower(), mode
+          assert sha256_pattern.fullmatch(mode["effective_sdc_sha256"]), mode
           assert mode["effective_audit"] is not None, mode
           effective = mode["effective_audit"]
           assert effective["diagnostic_count"] == 0, effective
           assert effective["added_diagnostic_count"] == 0, effective
           assert effective["semantic_match"] is True, effective
-          assert len(effective["static_semantic_sha256"]) == 64, effective
+          assert sha256_pattern.fullmatch(effective["static_semantic_sha256"]), effective
+          assert sha256_pattern.fullmatch(effective["effective_semantic_sha256"]), effective
           assert effective["static_semantic_sha256"] == effective["effective_semantic_sha256"], effective
           verify_complete_coverage(effective["coverage"])
 

@@ -8,7 +8,7 @@ import pytest
 
 import openconstraint.opensta as opensta
 from openconstraint.cli import _merge_opensta
-from openconstraint.engine import AuditOptions
+from openconstraint.engine import AuditOptions, ModeInput, audit
 from openconstraint.opensta import (
     OpenSTAConfig,
     OpenSTAModeConfig,
@@ -20,6 +20,10 @@ from openconstraint.opensta import (
     tcl_quote,
     validate_with_opensta,
 )
+from openconstraint.parsers.liberty import parse_liberty
+from openconstraint.parsers.verilog import elaborate, parse_verilog
+
+OPENSTA_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "opensta"
 
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -94,6 +98,30 @@ def test_rendered_driver_contains_only_fixed_quoted_commands(tmp_path: Path) -> 
         "}",
     ]
     assert driver.index("check_setup -verbose") < driver.index("write_sdc -no_timestamp")
+
+
+def test_real_opensta_fixture_is_statically_complete() -> None:
+    verilog = OPENSTA_FIXTURE_ROOT / "roundtrip.v"
+    liberty = OPENSTA_FIXTURE_ROOT / "roundtrip.lib"
+    sdc = OPENSTA_FIXTURE_ROOT / "roundtrip.sdc"
+    design = elaborate(parse_verilog([verilog]), parse_liberty(liberty), "opensta_roundtrip")
+
+    result = audit(design, [ModeInput("default", [str(sdc)])], AuditOptions())
+
+    assert result.diagnostics == []
+    assert len(result.modes) == 1
+    coverage = result.modes[0].coverage
+    assert (coverage.score, coverage.grade) == (100.0, "A")
+    components = {component.key: component for component in coverage.components}
+    assert {
+        key: (component.covered, component.total, component.percentage, component.weight)
+        for key, component in components.items()
+    } == {
+        "sequential_endpoints": (1, 1, 100.0, 0.5),
+        "input_delays": (4, 4, 100.0, 0.2),
+        "output_delays": (4, 4, 100.0, 0.2),
+        "query_health": (5, 5, 100.0, 0.1),
+    }
 
 
 def test_successful_multi_mode_validation_is_isolated_and_captured(

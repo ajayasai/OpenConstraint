@@ -1,0 +1,55 @@
+library (openconstraint_roundtrip) {
+  technology (cmos);
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  current_unit : "1mA";
+  capacitive_load_unit (1, pf);
+
+  cell (DFF) {
+    area : 1.0;
+
+    ff (IQ, IQN) {
+      clocked_on : "CLK";
+      next_state : "D";
+    }
+
+    pin (D) {
+      direction : input;
+      capacitance : 0.01;
+      timing () {
+        related_pin : "CLK";
+        timing_type : setup_rising;
+        rise_constraint (scalar) { values ("0.05"); }
+        fall_constraint (scalar) { values ("0.05"); }
+      }
+      timing () {
+        related_pin : "CLK";
+        timing_type : hold_rising;
+        rise_constraint (scalar) { values ("0.02"); }
+        fall_constraint (scalar) { values ("0.02"); }
+      }
+    }
+
+    pin (CLK) {
+      direction : input;
+      clock : true;
+      capacitance : 0.01;
+    }
+
+    pin (Q) {
+      direction : output;
+      function : "IQ";
+      max_capacitance : 0.10;
+      timing () {
+        related_pin : "CLK";
+        timing_type : rising_edge;
+        timing_sense : non_unate;
+        cell_rise (scalar) { values ("0.10"); }
+        cell_fall (scalar) { values ("0.10"); }
+        rise_transition (scalar) { values ("0.03"); }
+        fall_transition (scalar) { values ("0.03"); }
+      }
+    }
+  }
+}
