@@ -34,7 +34,9 @@ jobs:
   atheris:
     name: Atheris (${{ matrix.target }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The Tcl/SDC target deliberately explores work-bounded worst cases and
+    # can approach fourteen minutes for 20,000 mutations on shared runners.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
