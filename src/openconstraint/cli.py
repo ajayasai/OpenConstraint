@@ -1,0 +1,316 @@
+"""OpenConstraint command-line interface."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import shutil
+import sys
+from collections.abc import Sequence
+from importlib import resources
+from pathlib import Path
+
+from openconstraint.engine import AuditOptions, ModeInput, audit
+from openconstraint.model import SEVERITY_RANK, AuditResult, Design, Diagnostic, Severity, SourceLocation
+from openconstraint.opensta import OpenSTAError, OpenSTAValidationResult, validate_with_opensta
+from openconstraint.parsers.liberty import CellLibrary, parse_liberty
+from openconstraint.parsers.verilog import elaborate, parse_verilog
+from openconstraint.reporters.html import render_html
+from openconstraint.reporters.json import render_json
+from openconstraint.reporters.sarif import render_sarif
+from openconstraint.reporters.text import render_text
+from openconstraint.rules import RULES
+from openconstraint.version import __version__
+
+FORMATS = {"text": render_text, "json": render_json, "sarif": render_sarif, "html": render_html}
+
+
+def _percentage(value: str) -> float:
+    try:
+        result = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number from 0 through 100") from error
+    if not math.isfinite(result) or not 0.0 <= result <= 100.0:
+        raise argparse.ArgumentTypeError("must be a finite number from 0 through 100")
+    return result
+
+
+def _ratio(value: str) -> float:
+    try:
+        result = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number from 0 through 1") from error
+    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+        raise argparse.ArgumentTypeError("must be a finite number from 0 through 1")
+    return result
+
+
+def _nonnegative_integer(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer") from error
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return result
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="openconstraint",
+        description="Deterministic SDC constraint-quality auditing and structural coverage.",
+    )
+    parser.add_argument("--version", action="version", version=f"OpenConstraint {__version__}")
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    audit_parser = subcommands.add_parser("audit", help="Audit one design and one or more SDC modes.")
+    audit_parser.add_argument(
+        "--verilog", action="append", required=True, metavar="FILE", help="Structural Verilog netlist (repeatable)."
+    )
+    audit_parser.add_argument(
+        "--liberty", action="append", required=True, metavar="FILE", help="Liberty timing library (repeatable)."
+    )
+    audit_parser.add_argument(
+        "--sdc", action="append", metavar="FILE", help="SDC file in the default mode (repeatable)."
+    )
+    audit_parser.add_argument(
+        "--mode", action="append", metavar="NAME=FILE", help="Named-mode SDC; repeat NAME to combine files."
+    )
+    audit_parser.add_argument("--top", help="Top module; inferred when unambiguous.")
+    audit_parser.add_argument("--format", choices=[*FORMATS, "all"], default="text", dest="output_format")
+    audit_parser.add_argument(
+        "--output", default="-", metavar="PATH", help="Output file, '-' for stdout, or directory with --format all."
+    )
+    audit_parser.add_argument("--fail-on", choices=["error", "warning", "never"], default="error")
+    audit_parser.add_argument(
+        "--min-coverage",
+        type=_percentage,
+        metavar="PERCENT",
+        help="Fail when any mode is below this structural coverage (0 through 100).",
+    )
+    audit_parser.add_argument("--broad-match-count", type=_nonnegative_integer, default=50)
+    audit_parser.add_argument("--broad-match-ratio", type=_ratio, default=0.8)
+    audit_parser.add_argument("--no-implicit-waveform-note", action="store_true")
+    audit_parser.add_argument(
+        "--opensta",
+        action="store_true",
+        help="Explicitly execute trusted SDC in an installed OpenSTA process for validation.",
+    )
+    audit_parser.add_argument(
+        "--opensta-bin", metavar="PATH", help="OpenSTA executable (defaults to sta/opensta on PATH)."
+    )
+    audit_parser.add_argument("--opensta-timeout", type=float, default=120.0, metavar="SECONDS")
+
+    rules_parser = subcommands.add_parser("rules", help="List stable diagnostics.")
+    rules_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    schema_parser = subcommands.add_parser("schema", help="Print or copy the report JSON Schema.")
+    schema_parser.add_argument("--output", default="-", metavar="PATH")
+
+    demo_parser = subcommands.add_parser("demo", help="Run the bundled synthetic design and write every report format.")
+    demo_parser.add_argument("--output-dir", default="openconstraint-demo-report", metavar="DIR")
+    return parser
+
+
+def _mode_inputs(sdc: list[str] | None, values: list[str] | None) -> list[ModeInput]:
+    if sdc and values:
+        raise ValueError("use either --sdc or --mode, not both")
+    if sdc:
+        return [ModeInput("default", sdc)]
+    if not values:
+        raise ValueError("at least one --sdc FILE or --mode NAME=FILE is required")
+    grouped: dict[str, list[str]] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"invalid --mode {value!r}; expected NAME=FILE")
+        name, path = value.split("=", 1)
+        if not name.strip() or not path.strip():
+            raise ValueError(f"invalid --mode {value!r}; expected NAME=FILE")
+        grouped.setdefault(name.strip(), []).append(path.strip())
+    return [ModeInput(name, paths) for name, paths in grouped.items()]
+
+
+def _load_design(verilog_paths: list[str], liberty_paths: list[str], top: str | None) -> Design:
+    library = CellLibrary()
+    for path in liberty_paths:
+        library.merge(parse_liberty(path))
+    return elaborate(parse_verilog([Path(path) for path in verilog_paths]), library, top)
+
+
+def _write(value: str, output: str) -> None:
+    if output == "-":
+        sys.stdout.write(value)
+        return
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(value, encoding="utf-8", newline="\n")
+
+
+def _write_all(result: AuditResult, output: str) -> None:
+    if output == "-":
+        raise ValueError("--format all requires --output to name a directory")
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=True)
+    extensions = {"text": "txt", "json": "json", "sarif": "sarif", "html": "html"}
+    for name, renderer in FORMATS.items():
+        (destination / f"openconstraint-report.{extensions[name]}").write_text(
+            renderer(result), encoding="utf-8", newline="\n"
+        )
+
+
+def _quality_exit(result: AuditResult, fail_on: str, min_coverage: float | None) -> int:
+    if min_coverage is not None and any(mode.coverage.score < min_coverage for mode in result.modes):
+        return 1
+    if fail_on == "never":
+        return 0
+    threshold = Severity.ERROR if fail_on == "error" else Severity.WARNING
+    return 1 if any(SEVERITY_RANK[item.severity] >= SEVERITY_RANK[threshold] for item in result.diagnostics) else 0
+
+
+def _merge_opensta(result: AuditResult, validation: OpenSTAValidationResult) -> None:
+    mode_lookup = {mode.name: mode for mode in result.modes}
+    public_modes: list[dict[str, object]] = []
+    for mode_result in validation.modes:
+        public_modes.append(
+            {
+                "mode": mode_result.mode,
+                "succeeded": mode_result.succeeded,
+                "return_code": mode_result.returncode,
+                "timed_out": mode_result.timed_out,
+                "duration_seconds": round(mode_result.duration_seconds, 6),
+                "effective_sdc_sha256": mode_result.effective_sdc_sha256,
+                "stdout": mode_result.stdout,
+                "stderr": mode_result.stderr,
+            }
+        )
+        if mode_result.succeeded:
+            continue
+        mode = mode_lookup.get(mode_result.mode)
+        location = (
+            mode.clocks[next(iter(mode.clocks))].location
+            if mode is not None and mode.clocks
+            else SourceLocation(f"<opensta:{mode_result.mode}>")
+        )
+        if mode_result.timed_out:
+            message = f"OpenSTA validation for mode {mode_result.mode!r} timed out"
+        else:
+            message = (
+                f"OpenSTA validation for mode {mode_result.mode!r} exited with "
+                f"{mode_result.returncode if mode_result.returncode is not None else 'no status'}"
+            )
+        finding = Diagnostic(
+            "OC6001",
+            Severity.ERROR,
+            message,
+            location,
+            "The optional engine-backed check did not produce a clean effective constraint snapshot.",
+            "Review OpenSTA stdout/stderr, repair load or check_setup issues, and rerun with the same pinned OpenSTA version.",
+            mode_result.mode,
+            {
+                "opensta_version": validation.version,
+                "return_code": mode_result.returncode,
+                "timed_out": mode_result.timed_out,
+                "stderr_tail": mode_result.stderr[-4000:],
+                "stdout_tail": mode_result.stdout[-4000:],
+            },
+        )
+        result.diagnostics.append(finding)
+        if mode is not None:
+            mode.diagnostics.append(finding)
+    result.summary["opensta"] = {
+        "version": validation.version,
+        "succeeded": validation.succeeded,
+        "modes": public_modes,
+    }
+    result.summary["diagnostic_count"] = len(result.diagnostics)
+    result.summary["errors"] = sum(item.severity == Severity.ERROR for item in result.diagnostics)
+    result.summary["warnings"] = sum(item.severity == Severity.WARNING for item in result.diagnostics)
+    result.summary["notes"] = sum(item.severity == Severity.NOTE for item in result.diagnostics)
+
+
+def _audit_command(arguments: argparse.Namespace) -> int:
+    modes = _mode_inputs(arguments.sdc, arguments.mode)
+    design = _load_design(arguments.verilog, arguments.liberty, arguments.top)
+    options = AuditOptions(
+        broad_match_count=arguments.broad_match_count,
+        broad_match_ratio=arguments.broad_match_ratio,
+        report_implicit_waveform=not arguments.no_implicit_waveform_note,
+    )
+    result = audit(design, modes, options)
+    if arguments.opensta:
+        validation = validate_with_opensta(
+            arguments.verilog,
+            arguments.liberty,
+            design.top,
+            modes,
+            binary=arguments.opensta_bin,
+            timeout=arguments.opensta_timeout,
+        )
+        _merge_opensta(result, validation)
+    if arguments.output_format == "all":
+        _write_all(result, arguments.output)
+    else:
+        _write(FORMATS[arguments.output_format](result), arguments.output)
+    return _quality_exit(result, arguments.fail_on, arguments.min_coverage)
+
+
+def _rules_command(as_json: bool) -> int:
+    if as_json:
+        payload = [
+            {
+                "id": rule.rule_id,
+                "name": rule.name,
+                "severity": rule.default_severity.value,
+                "category": rule.category,
+                "summary": rule.summary,
+            }
+            for rule in RULES.values()
+        ]
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    else:
+        for rule in RULES.values():
+            sys.stdout.write(f"{rule.rule_id}  {rule.default_severity.value:<7}  {rule.name:<33} {rule.summary}\n")
+    return 0
+
+
+def _schema_command(output: str) -> int:
+    schema = (
+        resources.files("openconstraint.schemas")
+        .joinpath("openconstraint-report.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    _write(schema.rstrip() + "\n", output)
+    return 0
+
+
+def _demo_command(output_dir: str) -> int:
+    destination = Path(output_dir).resolve()
+    inputs = destination / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+    package = resources.files("openconstraint.demo")
+    for name in ("tiny.v", "cells.lib", "constraints.sdc"):
+        with resources.as_file(package.joinpath(name)) as source:
+            shutil.copyfile(source, inputs / name)
+    design = _load_design([str(inputs / "tiny.v")], [str(inputs / "cells.lib")], "tiny_top")
+    result = audit(design, [ModeInput("functional", [str(inputs / "constraints.sdc")])])
+    _write_all(result, str(destination))
+    sys.stdout.write(f"Wrote synthetic inputs and reports to {destination}\n")
+    return _quality_exit(result, "error", 100.0)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.command == "audit":
+            return _audit_command(arguments)
+        if arguments.command == "rules":
+            return _rules_command(arguments.json)
+        if arguments.command == "schema":
+            return _schema_command(arguments.output)
+        if arguments.command == "demo":
+            return _demo_command(arguments.output_dir)
+    except (OSError, UnicodeError, ValueError, OpenSTAError) as error:
+        parser.exit(2, f"openconstraint: input error: {error}\n")
+    return 2

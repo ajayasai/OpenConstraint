@@ -1,0 +1,20 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - dependencies
+  categories:
+    - title: Security
+      labels: [security]
+    - title: Rules and analysis
+      labels: [rules]
+    - title: Compatibility
+      labels: [compatibility]
+    - title: Features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Documentation and maintenance
+      labels: [documentation, maintenance]
+    - title: Other changes
+      labels: ["*"]

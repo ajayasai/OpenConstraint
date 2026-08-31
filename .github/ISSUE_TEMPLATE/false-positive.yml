@@ -1,0 +1,51 @@
+name: False positive
+description: A diagnostic fires where the documented static condition should not apply.
+title: "[False positive]: "
+labels: [rules, false-positive, triage]
+body:
+  - type: markdown
+    attributes:
+      value: "Use a minimal synthetic fixture. Do not upload proprietary design files."
+  - type: input
+    id: version
+    attributes:
+      label: OpenConstraint version
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Diagnostic ID
+      placeholder: OC1001
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Emitted finding and evidence
+      description: Paste the JSON diagnostic when possible.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal synthetic Verilog, Liberty, and SDC
+    validations:
+      required: true
+  - type: textarea
+    id: reasoning
+    attributes:
+      label: Why the condition should not apply
+      description: Refer to the rule documentation and distinguish unsupported syntax from incorrect rule logic.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reviewed the documented compatibility boundary and rule limitations.
+          required: true
+        - label: This report contains no confidential or proprietary data.
+          required: true

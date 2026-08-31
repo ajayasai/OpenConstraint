@@ -1,0 +1,20 @@
+library (openconstraint_tiny) {
+  time_unit : "1ns";
+  cell (MUX2) {
+    pin (A) { direction : input; }
+    pin (B) { direction : input; }
+    pin (S) { direction : input; }
+    pin (Y) { direction : output; function : "(A & !S) | (B & S)"; }
+  }
+  cell (DFFR) {
+    ff (IQ, IQN) {
+      clocked_on : "CLK";
+      next_state : "D";
+      clear : "!RN";
+    }
+    pin (D)   { direction : input; }
+    pin (CLK) { direction : input; clock : true; }
+    pin (RN)  { direction : input; }
+    pin (Q)   { direction : output; }
+  }
+}

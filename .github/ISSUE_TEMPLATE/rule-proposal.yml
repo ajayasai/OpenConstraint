@@ -1,0 +1,56 @@
+name: Rule proposal
+description: Propose a deterministic, explainable diagnostic.
+title: "[Rule proposal]: "
+labels: [rfc, rules]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Proposed rule name
+      placeholder: missing-clock-uncertainty
+    validations:
+      required: true
+  - type: textarea
+    id: condition
+    attributes:
+      label: Exact static condition
+      description: Define inputs, evidence, exclusions, and deterministic decision logic.
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Engineering risk and remediation
+      description: Explain why the condition matters and what a user can safely do next.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Suggested default severity
+      options:
+        - warning
+        - error
+        - note
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: False-positive and false-negative boundaries
+    validations:
+      required: true
+  - type: textarea
+    id: fixtures
+    attributes:
+      label: Proposed synthetic fixtures
+      description: Describe failing, passing, and edge cases.
+    validations:
+      required: true
+  - type: textarea
+    id: coverage
+    attributes:
+      label: Coverage impact
+      description: State whether any numerator, denominator, exclusion, or weight would change.
+    validations:
+      required: true

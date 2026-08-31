@@ -1,0 +1,640 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "properties": {
+        "design": {
+          "instances": 3,
+          "nets": 9,
+          "parser_warnings": [],
+          "ports": 8,
+          "sequential_endpoints": 2,
+          "sequential_instances": 2,
+          "top": "tiny_top"
+        },
+        "summary": {
+          "coverage": {
+            "default": 57.5
+          },
+          "diagnostic_count": 13,
+          "errors": 7,
+          "mode_count": 1,
+          "notes": 1,
+          "warnings": 5
+        }
+      },
+      "results": [
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "openconstraint://design"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] 3 input port(s) have no input delay\n\nAdd set_input_delay for synchronous interfaces or document an intentional asynchronous exception."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "b4591f52b27052f74bdd"
+          },
+          "properties": {
+            "evidence": {
+              "ports": [
+                "din[0]",
+                "din[1]",
+                "rst_n"
+              ]
+            },
+            "mode": "default",
+            "rationale": "Undelayed non-clock inputs have no modeled external launch relationship."
+          },
+          "ruleId": "OC3001"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "openconstraint://design"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] 2 output port(s) have no output delay\n\nAdd set_output_delay per interface and reference the appropriate clock."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "a17af0a1cf30a451a679"
+          },
+          "properties": {
+            "evidence": {
+              "ports": [
+                "dout[0]",
+                "dout[1]"
+              ]
+            },
+            "mode": "default",
+            "rationale": "Undelayed outputs have no modeled external capture requirement."
+          },
+          "ruleId": "OC3002"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Object query matches zero ports: [get_ports missing_clk]\n\nCorrect the pattern or hierarchy and confirm the intended object exists in this mode."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "8e9fcf3d27dd592952ee"
+          },
+          "properties": {
+            "evidence": {
+              "object_kind": "ports",
+              "query": "[get_ports missing_clk]",
+              "universe_size": 8
+            },
+            "mode": "default",
+            "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows."
+          },
+          "ruleId": "OC1001"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Clock 'ghost_clock' has no valid positive period\n\nAdd -period for a primary clock or fix the generated-clock master/source relationship."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "66d71b61e103bdc83846"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "ghost_clock",
+              "period": null
+            },
+            "mode": "default",
+            "rationale": "A primary clock needs a positive period; generated clocks need a resolvable master or explicit period."
+          },
+          "ruleId": "OC2001"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Wildcard query matches 8 of 8 ports\n\nNarrow the pattern, list intentional groups, or review and baseline the exact matched objects."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "f962efd887e58eeedeb3"
+          },
+          "properties": {
+            "evidence": {
+              "matched_count": 8,
+              "query": "[get_ports *]",
+              "sample": [
+                "clk",
+                "din[0]",
+                "din[1]",
+                "dout[0]",
+                "dout[1]",
+                "rst_n",
+                "scan_clk",
+                "scan_en"
+              ]
+            },
+            "mode": "default",
+            "rationale": "Broad collections can grow silently after synthesis or hierarchy changes and change exception scope."
+          },
+          "ruleId": "OC1002"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Clock 'all_ports' uses the implicit 50% duty-cycle waveform\n\nAdd -waveform only when the real active edges differ from {0, period/2}."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "33b941324f97bc082b34"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "all_ports",
+              "implicit_waveform": [
+                0.0,
+                4.0
+              ]
+            },
+            "mode": "default",
+            "rationale": "The default waveform is valid, but an explicit waveform makes intent reviewable for non-50% clocks."
+          },
+          "ruleId": "OC2002"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Object query matches zero pins: [get_pins u_missing/CLK]\n\nCorrect the pattern or hierarchy and confirm the intended object exists in this mode."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "0834c05a44c5084f20c4"
+          },
+          "properties": {
+            "evidence": {
+              "object_kind": "pins",
+              "query": "[get_pins u_missing/CLK]",
+              "universe_size": 12
+            },
+            "mode": "default",
+            "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows."
+          },
+          "ruleId": "OC1001"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Clock 'divided' has no valid positive period\n\nAdd -period for a primary clock or fix the generated-clock master/source relationship."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "f3dafe96ff1050314509"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "divided",
+              "period": null
+            },
+            "mode": "default",
+            "rationale": "A primary clock needs a positive period; generated clocks need a resolvable master or explicit period."
+          },
+          "ruleId": "OC2001"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Generated clock 'divided' has no resolvable -source object\n\nPoint -source at the master clock path and ensure the object query matches this netlist."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "2c35eb961fc10f7b9484"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "divided"
+            },
+            "mode": "default",
+            "rationale": "Generated-clock phase and frequency must be related to a real source pin or port."
+          },
+          "ruleId": "OC2010"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Generated clock 'divided' source is not reachable from its master clock\n\nFix -source/-master_clock or the netlist clock path; inspect the HTML clock graph."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "5d48e4825e2244070e98"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "divided",
+              "master": null,
+              "source_targets": []
+            },
+            "mode": "default",
+            "rationale": "A generated clock with an unrelated source creates an invalid or ambiguous timing relationship."
+          },
+          "ruleId": "OC2011"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 6
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Wildcard query matches 8 of 8 ports\n\nNarrow the pattern, list intentional groups, or review and baseline the exact matched objects."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "c3f091eb5e9d28e97b15"
+          },
+          "properties": {
+            "evidence": {
+              "matched_count": 8,
+              "query": "[get_ports *]",
+              "sample": [
+                "clk",
+                "din[0]",
+                "din[1]",
+                "dout[0]",
+                "dout[1]",
+                "rst_n",
+                "scan_clk",
+                "scan_en"
+              ]
+            },
+            "mode": "default",
+            "rationale": "Broad collections can grow silently after synthesis or hierarchy changes and change exception scope."
+          },
+          "ruleId": "OC1002"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Wildcard query matches 8 of 8 ports\n\nNarrow the pattern, list intentional groups, or review and baseline the exact matched objects."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "2ad84962e4595834f3b0"
+          },
+          "properties": {
+            "evidence": {
+              "matched_count": 8,
+              "query": "[get_ports *]",
+              "sample": [
+                "clk",
+                "din[0]",
+                "din[1]",
+                "dout[0]",
+                "dout[1]",
+                "rst_n",
+                "scan_clk",
+                "scan_en"
+              ]
+            },
+            "mode": "default",
+            "rationale": "Broad collections can grow silently after synthesis or hierarchy changes and change exception scope."
+          },
+          "ruleId": "OC1002"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] False-path and multicycle exceptions overlap\n\nNarrow the collections or keep one constraint that states the intended timing policy."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "52cbcb30bc08536d3228"
+          },
+          "properties": {
+            "evidence": {
+              "first": {
+                "column": 1,
+                "line": 6,
+                "path": "examples/tiny/broken.sdc"
+              },
+              "from_intersection": [
+                "clk",
+                "din[0]",
+                "din[1]",
+                "dout[0]",
+                "dout[1]",
+                "rst_n",
+                "scan_clk",
+                "scan_en"
+              ],
+              "second": {
+                "column": 1,
+                "line": 7,
+                "path": "examples/tiny/broken.sdc"
+              },
+              "to_intersection": [
+                "u_ff0/D",
+                "u_ff1/D"
+              ]
+            },
+            "mode": "default",
+            "rationale": "A false path removes timing analysis while a multicycle path modifies it; applying both obscures intent."
+          },
+          "ruleId": "OC4001"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/ajayasai/OpenConstraint",
+          "name": "OpenConstraint",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC1001.md",
+              "id": "OC1001",
+              "name": "zero-object-query",
+              "properties": {
+                "category": "queries",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "An SDC object query matches nothing."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC1002.md",
+              "id": "OC1002",
+              "name": "dangerously-broad-query",
+              "properties": {
+                "category": "queries",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A wildcard query covers a risky share of its object universe."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2001.md",
+              "id": "OC2001",
+              "name": "invalid-clock-period",
+              "properties": {
+                "category": "clocks",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A clock has no valid positive period."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2002.md",
+              "id": "OC2002",
+              "name": "implicit-clock-waveform",
+              "properties": {
+                "category": "clocks",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A primary clock uses the valid implicit 50% waveform."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2010.md",
+              "id": "OC2010",
+              "name": "generated-clock-source-missing",
+              "properties": {
+                "category": "generated clocks",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A generated clock source resolves to nothing."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2011.md",
+              "id": "OC2011",
+              "name": "generated-clock-master-invalid",
+              "properties": {
+                "category": "generated clocks",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A generated-clock source is unrelated to the selected master."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC3001.md",
+              "id": "OC3001",
+              "name": "input-delay-missing",
+              "properties": {
+                "category": "I/O",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A non-clock input is missing an input delay."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC3002.md",
+              "id": "OC3002",
+              "name": "output-delay-missing",
+              "properties": {
+                "category": "I/O",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "An output is missing an output delay."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC4001.md",
+              "id": "OC4001",
+              "name": "overlapping-exception",
+              "properties": {
+                "category": "exceptions",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "Timing exceptions overlap or shadow one another."
+              }
+            }
+          ],
+          "version": "0.1.0b0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality, package, and demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install development tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install "check-jsonschema>=0.38,<0.39"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy src/openconstraint
+
+      - name: Validate GitHub metadata
+        run: |
+          check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+          check-jsonschema --builtin-schema github-workflows-require-timeout .github/workflows/*.yml
+          check-jsonschema --builtin-schema vendor.dependabot .github/dependabot.yml
+          find .github/ISSUE_TEMPLATE -name '*.yml' ! -name config.yml -print0 | xargs -0 check-jsonschema --builtin-schema vendor.github-issue-forms
+          check-jsonschema --builtin-schema vendor.github-issue-config .github/ISSUE_TEMPLATE/config.yml
+          check-jsonschema --builtin-schema vendor.citation-file-format CITATION.cff
+
+      - name: Check relative documentation links
+        shell: python
+        run: |
+          import re
+          from pathlib import Path
+          from urllib.parse import unquote
+
+          failures = []
+          for document in Path(".").rglob("*.md"):
+              text = document.read_text(encoding="utf-8")
+              for target in re.findall(r"\]\(([^)]+)\)", text):
+                  target = target.strip().strip("<>").split("#", 1)[0]
+                  if not target or "://" in target or target.startswith(("mailto:", "#")):
+                      continue
+                  resolved = (document.parent / unquote(target)).resolve()
+                  if not resolved.exists():
+                      failures.append(f"{document}: missing {target}")
+          if failures:
+              raise SystemExit("\n".join(failures))
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distribution metadata
+        run: python -m twine check dist/*
+
+      - name: Install built wheel
+        run: python -m pip install --force-reinstall dist/*.whl
+
+      - name: Run bundled demo
+        run: openconstraint demo --output-dir "${{ runner.temp }}/openconstraint-demo"
+
+      - name: Validate demo JSON against the bundled schema
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          root = Path("${{ runner.temp }}") / "openconstraint-demo"
+          report = json.loads((root / "openconstraint-report.json").read_text(encoding="utf-8"))
+          schema_path = Path("${{ runner.temp }}") / "openconstraint-report.schema.json"
+          import subprocess
+          subprocess.run(
+              ["openconstraint", "schema", "--output", str(schema_path)],
+              check=True,
+          )
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+          Draft202012Validator(schema).validate(report)
+
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.14"
+          - os: windows-latest
+            python: "3.14"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests with branch coverage
+        run: pytest --cov=openconstraint --cov-branch --cov-report=term-missing
+
+      - name: Smoke-test machine-readable commands
+        run: |
+          openconstraint rules --json
+          openconstraint schema --output openconstraint-report.schema.json

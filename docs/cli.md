@@ -1,0 +1,88 @@
+# CLI reference
+
+## `openconstraint audit`
+
+```text
+openconstraint audit --verilog FILE [--verilog FILE ...]
+                     --liberty FILE [--liberty FILE ...]
+                     (--sdc FILE [--sdc FILE ...] |
+                      --mode NAME=FILE [--mode NAME=FILE ...])
+                     [--top MODULE]
+                     [--format text|json|sarif|html|all]
+                     [--output PATH]
+                     [--fail-on error|warning|never]
+                     [--min-coverage PERCENT]
+                     [--broad-match-count COUNT]
+                     [--broad-match-ratio RATIO]
+                     [--no-implicit-waveform-note]
+                     [--opensta]
+                     [--opensta-bin PATH]
+                     [--opensta-timeout SECONDS]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--verilog FILE` | Structural Verilog input; repeatable and required. |
+| `--liberty FILE` | Liberty input; repeatable and required. |
+| `--sdc FILE` | SDC in a single mode named `default`; repeatable. |
+| `--mode NAME=FILE` | Named-mode SDC; repeat a name to append files to that mode. |
+| `--top MODULE` | Top module. If omitted, the parser chooses the only uninstantiated module or its first parsed module when ambiguous. Specify it for reproducibility. |
+| `--format` | `text` by default. `all` writes every format to a directory. |
+| `--output PATH` | `-` means stdout. With `--format all`, this must be a directory path and cannot be `-`. |
+| `--fail-on` | Lowest diagnostic severity that fails the quality gate. Default: `error`. `never` disables severity failure. |
+| `--min-coverage PERCENT` | Fail if any audited mode is below the finite 0–100 threshold. |
+| `--broad-match-count COUNT` | Nonnegative absolute wildcard threshold. Default: 50 matches. |
+| `--broad-match-ratio RATIO` | Finite 0–1 fractional wildcard threshold. Default: 0.8. |
+| `--no-implicit-waveform-note` | Suppress `OC2002` notes for valid implicit primary-clock waveforms. |
+| `--opensta` | Explicitly execute trusted inputs in a separately installed OpenSTA process after the static audit. Off by default. |
+| `--opensta-bin PATH` | Executable path/name. With `--opensta`, defaults to discovering `sta` then `opensta` on `PATH`. |
+| `--opensta-timeout SECONDS` | Positive finite timeout for the version query and each mode process. Default: 120. |
+
+A wildcard is broad when the object universe has at least five members and the
+query meets either configured threshold. `all_inputs`, `all_outputs`, and
+`all_clocks` are excluded from this warning.
+
+## Exit codes
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | Audit completed and the selected severity/coverage policy passed. |
+| 1 | Audit completed, but a diagnostic or minimum-coverage policy failed. |
+| 2 | Invalid arguments, unreadable input, decoding failure, or modeled input error. |
+
+The report is written before the quality-policy exit code is calculated. This
+allows CI to upload SARIF or HTML even when findings fail the gate.
+
+An OpenSTA mode timeout, nonzero exit, failed `check_setup`, or missing effective
+SDC emits error OC6001 and therefore normally exits 1 after writing the report.
+Failure to locate or start the explicitly requested executable is an input or
+operational error rather than a clean static result.
+
+## `openconstraint rules`
+
+List the installed stable diagnostic catalog:
+
+```console
+openconstraint rules
+openconstraint rules --json
+```
+
+## `openconstraint schema`
+
+Print or copy the JSON report schema:
+
+```console
+openconstraint schema
+openconstraint schema --output openconstraint-report.schema.json
+```
+
+## `openconstraint demo`
+
+Copy the bundled synthetic inputs and generate all reports:
+
+```console
+openconstraint demo --output-dir openconstraint-demo-report
+```
+
+The destination is created if needed. Existing same-named demo inputs and
+reports may be overwritten; choose the path deliberately.

@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "properties": {
+        "design": {
+          "instances": 3,
+          "nets": 9,
+          "parser_warnings": [],
+          "ports": 8,
+          "sequential_endpoints": 2,
+          "sequential_instances": 2,
+          "top": "tiny_top"
+        },
+        "summary": {
+          "coverage": {
+            "functional": 100.0,
+            "scan": 100.0
+          },
+          "diagnostic_count": 2,
+          "errors": 0,
+          "mode_count": 2,
+          "notes": 2,
+          "warnings": 0
+        }
+      },
+      "results": [
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/functional.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[cross-mode] Clock 'core_clk' differs across constraint modes\n\nReview the per-mode definitions and record intentional differences in version control."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "8a09736906edb96230c7"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "core_clk",
+              "definitions": {
+                "functional": [
+                  10.0,
+                  [
+                    "clk"
+                  ],
+                  false
+                ]
+              },
+              "missing_modes": [
+                "scan"
+              ]
+            },
+            "mode": "cross-mode",
+            "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons."
+          },
+          "ruleId": "OC5001"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/scan.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[cross-mode] Clock 'scan_clk' differs across constraint modes\n\nReview the per-mode definitions and record intentional differences in version control."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "cc67ff87f248c842f96e"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "scan_clk",
+              "definitions": {
+                "scan": [
+                  50.0,
+                  [
+                    "scan_clk"
+                  ],
+                  false
+                ]
+              },
+              "missing_modes": [
+                "functional"
+              ]
+            },
+            "mode": "cross-mode",
+            "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons."
+          },
+          "ruleId": "OC5001"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/ajayasai/OpenConstraint",
+          "name": "OpenConstraint",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC5001.md",
+              "id": "OC5001",
+              "name": "mode-clock-drift",
+              "properties": {
+                "category": "modes",
+                "precision": "high"
+              },
+              "shortDescription": {
+                "text": "A clock definition differs across modes."
+              }
+            }
+          ],
+          "version": "0.1.0b0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

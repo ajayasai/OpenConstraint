@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If OpenConstraint supports your work, please cite the software release you used."
+title: "OpenConstraint: an auditable static SDC constraint-quality checker"
+type: software
+authors:
+  - name: "OpenConstraint contributors"
+version: "0.1.0-beta"
+license: Apache-2.0
+repository-code: "https://github.com/ajayasai/OpenConstraint"
+url: "https://github.com/ajayasai/OpenConstraint"
+keywords:
+  - electronic design automation
+  - static timing analysis
+  - SDC
+  - constraint linting
+  - OpenSTA

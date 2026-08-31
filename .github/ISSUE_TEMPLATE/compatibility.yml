@@ -1,0 +1,53 @@
+name: Parser or tool compatibility
+description: Request support for a real-world Verilog, Liberty, or SDC construct.
+title: "[Compatibility]: "
+labels: [compatibility, triage]
+body:
+  - type: dropdown
+    id: language
+    attributes:
+      label: Input area
+      options:
+        - SDC/Tcl
+        - Structural Verilog/SystemVerilog
+        - Liberty
+        - SARIF/JSON/HTML consumer
+        - Platform or Python
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenConstraint version
+    validations:
+      required: true
+  - type: textarea
+    id: syntax
+    attributes:
+      label: Minimal synthetic syntax
+      description: Reduce the construct without copying proprietary library or design content.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Required static semantics
+      description: Explain what objects or relationships the checker should model and cite a public specification when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: The example is synthetic or permissively licensed.
+          required: true
+        - label: The requested behavior does not require silent Tcl execution.
+          required: true

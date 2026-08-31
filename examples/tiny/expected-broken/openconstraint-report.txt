@@ -1,0 +1,38 @@
+OpenConstraint 0.1.0b0 — tiny_top
+Design: 8 ports, 3 cells, 2 sequential endpoints
+
+Mode default: 57.50% structural coverage (grade D)
+  Clocked sequential endpoints       2/2      100.00%
+  Input-delay coverage               0/3        0.00%
+  Output-delay coverage              0/2        0.00%
+  Resolvable object queries          6/8       75.00%
+
+WARNING OC3001 [default] <design>:1:1 — 3 input port(s) have no input delay
+         Fix: Add set_input_delay for synchronous interfaces or document an intentional asynchronous exception.
+WARNING OC3002 [default] <design>:1:1 — 2 output port(s) have no output delay
+         Fix: Add set_output_delay per interface and reference the appropriate clock.
+ERROR   OC1001 [default] examples/tiny/broken.sdc:2:1 — Object query matches zero ports: [get_ports missing_clk]
+         Fix: Correct the pattern or hierarchy and confirm the intended object exists in this mode.
+ERROR   OC2001 [default] examples/tiny/broken.sdc:2:1 — Clock 'ghost_clock' has no valid positive period
+         Fix: Add -period for a primary clock or fix the generated-clock master/source relationship.
+WARNING OC1002 [default] examples/tiny/broken.sdc:3:1 — Wildcard query matches 8 of 8 ports
+         Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+NOTE    OC2002 [default] examples/tiny/broken.sdc:3:1 — Clock 'all_ports' uses the implicit 50% duty-cycle waveform
+         Fix: Add -waveform only when the real active edges differ from {0, period/2}.
+ERROR   OC1001 [default] examples/tiny/broken.sdc:4:1 — Object query matches zero pins: [get_pins u_missing/CLK]
+         Fix: Correct the pattern or hierarchy and confirm the intended object exists in this mode.
+ERROR   OC2001 [default] examples/tiny/broken.sdc:4:1 — Clock 'divided' has no valid positive period
+         Fix: Add -period for a primary clock or fix the generated-clock master/source relationship.
+ERROR   OC2010 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divided' has no resolvable -source object
+         Fix: Point -source at the master clock path and ensure the object query matches this netlist.
+ERROR   OC2011 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divided' source is not reachable from its master clock
+         Fix: Fix -source/-master_clock or the netlist clock path; inspect the HTML clock graph.
+WARNING OC1002 [default] examples/tiny/broken.sdc:6:1 — Wildcard query matches 8 of 8 ports
+         Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+WARNING OC1002 [default] examples/tiny/broken.sdc:7:1 — Wildcard query matches 8 of 8 ports
+         Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+ERROR   OC4001 [default] examples/tiny/broken.sdc:7:1 — False-path and multicycle exceptions overlap
+         Fix: Narrow the collections or keep one constraint that states the intended timing policy.
+
+Summary: 7 error(s), 5 warning(s), 1 note(s)
+Structural coverage measures modeled obligations; it does not prove functional false paths or sign-off correctness.

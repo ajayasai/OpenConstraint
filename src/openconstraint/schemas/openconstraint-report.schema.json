@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-report.schema.json",
+  "title": "OpenConstraint audit report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "design", "summary", "modes", "diagnostics"],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "tool": {
+      "$ref": "#/$defs/tool"
+    },
+    "design": {
+      "$ref": "#/$defs/design"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "modes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/mode"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "const": "OpenConstraint"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "design": {
+      "type": "object",
+      "description": "Design inventory. Additional properties are allowed for compatible inventory extensions.",
+      "required": [
+        "top",
+        "ports",
+        "nets",
+        "instances",
+        "sequential_instances",
+        "sequential_endpoints",
+        "parser_warnings"
+      ],
+      "properties": {
+        "top": {
+          "type": "string"
+        },
+        "ports": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "instances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequential_instances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequential_endpoints": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parser_warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["diagnostic_count", "errors", "warnings", "notes", "mode_count", "coverage"],
+      "properties": {
+        "diagnostic_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "coverage": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        },
+        "opensta": {
+          "$ref": "#/$defs/opensta_summary"
+        }
+      }
+    },
+    "opensta_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "succeeded", "modes"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "succeeded": {
+          "type": "boolean"
+        },
+        "modes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/opensta_mode"
+          }
+        }
+      }
+    },
+    "opensta_mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "succeeded",
+        "return_code",
+        "timed_out",
+        "duration_seconds",
+        "effective_sdc_sha256",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "succeeded": {
+          "type": "boolean"
+        },
+        "return_code": {
+          "type": ["integer", "null"]
+        },
+        "timed_out": {
+          "type": "boolean"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "effective_sdc_sha256": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        }
+      }
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "coverage", "clocks", "exceptions", "graph", "diagnostics"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "clocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clock"
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/exception"
+          }
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "grade", "components"],
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "grade": {
+          "enum": ["A", "B", "C", "D", "F"]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coverage_component"
+          }
+        }
+      }
+    },
+    "coverage_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "covered", "total", "percentage", "weight", "explanation"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "covered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "percentage": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "explanation": {
+          "type": "string"
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "targets",
+        "period",
+        "waveform",
+        "generated",
+        "source_targets",
+        "master_clock",
+        "location"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "targets": {
+          "$ref": "#/$defs/string_set"
+        },
+        "period": {
+          "type": ["number", "null"]
+        },
+        "waveform": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generated": {
+          "type": "boolean"
+        },
+        "source_targets": {
+          "$ref": "#/$defs/string_set"
+        },
+        "master_clock": {
+          "type": ["string", "null"]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        }
+      }
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to", "through", "location", "raw"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "$ref": "#/$defs/string_set"
+        },
+        "to": {
+          "$ref": "#/$defs/string_set"
+        },
+        "through": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/string_set"
+          }
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "raw": {
+          "type": "string"
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/graph_node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/graph_edge"
+          }
+        }
+      }
+    },
+    "graph_node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "graph_edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target", "kind"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "severity",
+        "message",
+        "location",
+        "rationale",
+        "suggestion",
+        "mode",
+        "fingerprint",
+        "evidence"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "pattern": "^OC[0-9]{4}$"
+        },
+        "severity": {
+          "enum": ["error", "warning", "note"]
+        },
+        "message": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "suggestion": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{20}$"
+        },
+        "evidence": {
+          "type": "object",
+          "description": "Rule-specific JSON evidence. Rule implementations may add fields compatibly.",
+          "additionalProperties": true
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "column"],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "string_set": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

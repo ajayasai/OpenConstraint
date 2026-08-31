@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from openconstraint.cli import _mode_inputs, main
+
+from .conftest import COMPLETE_SDC
+
+
+def _audit_args(verilog: Path, liberty: Path, sdc: Path) -> list[str]:
+    return [
+        "audit",
+        "--verilog",
+        str(verilog),
+        "--liberty",
+        str(liberty),
+        "--sdc",
+        str(sdc),
+        "--top",
+        "top",
+    ]
+
+
+def test_cli_rules_text_and_json_expose_the_same_stable_catalog(capsys) -> None:
+    assert main(["rules"]) == 0
+    text = capsys.readouterr().out
+    assert "OC0001" in text
+    assert "OC5002" in text
+
+    assert main(["rules", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [item["id"] for item in payload] == sorted(item["id"] for item in payload)
+    assert {item["id"] for item in payload} == {
+        "OC0001",
+        "OC1001",
+        "OC1002",
+        "OC1003",
+        "OC1004",
+        "OC2001",
+        "OC2002",
+        "OC2003",
+        "OC2004",
+        "OC2010",
+        "OC2011",
+        "OC2101",
+        "OC3001",
+        "OC3002",
+        "OC4001",
+        "OC5001",
+        "OC5002",
+        "OC6001",
+    }
+
+
+def test_cli_schema_stdout_is_valid_json_schema(capsys) -> None:
+    assert main(["schema"]) == 0
+    schema = json.loads(capsys.readouterr().out)
+
+    assert schema["$schema"].endswith("schema")
+    assert schema["title"] == "OpenConstraint audit report"
+    assert "modes" in schema["required"]
+
+
+def test_cli_schema_can_be_copied_to_file(tmp_path: Path) -> None:
+    output = tmp_path / "schema.json"
+
+    assert main(["schema", "--output", str(output)]) == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["title"] == "OpenConstraint audit report"
+
+
+def test_cli_audit_json_stdout_and_success_exit_for_complete_design(project_files, capsys) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+    code = main([*_audit_args(verilog, liberty, sdc), "--format", "json", "--no-implicit-waveform-note"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["summary"]["coverage"] == {"default": 100.0}
+    assert payload["summary"]["errors"] == 0
+
+
+def test_cli_fail_on_error_does_not_fail_warnings_but_fail_on_warning_does(project_files, capsys) -> None:
+    verilog, liberty, sdc = project_files(sdc="create_clock -name core -period 10 -waveform {0 5} [get_ports clk]")
+    args = [*_audit_args(verilog, liberty, sdc), "--format", "json"]
+
+    assert main([*args, "--fail-on", "error"]) == 0
+    capsys.readouterr()
+    assert main([*args, "--fail-on", "warning"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["warnings"] >= 1
+
+
+def test_cli_fail_on_never_allows_diagnostics_but_not_minimum_coverage_failure(project_files, capsys) -> None:
+    verilog, liberty, sdc = project_files(sdc="create_clock -name core -period 0 [get_ports clk]")
+    args = [*_audit_args(verilog, liberty, sdc), "--format", "json", "--fail-on", "never"]
+
+    assert main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["errors"] >= 1
+
+    assert main([*args, "--min-coverage", "100"]) == 1
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--min-coverage", "nan"),
+        ("--min-coverage", "-1"),
+        ("--min-coverage", "100.01"),
+        ("--broad-match-count", "-1"),
+        ("--broad-match-ratio", "nan"),
+        ("--broad-match-ratio", "-0.1"),
+        ("--broad-match-ratio", "1.1"),
+    ],
+)
+def test_cli_rejects_invalid_numeric_policy_values(project_files, capsys, option: str, value: str) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+
+    with pytest.raises(SystemExit) as caught:
+        main([*_audit_args(verilog, liberty, sdc), option, value])
+
+    assert caught.value.code == 2
+    assert "must be" in capsys.readouterr().err
+
+
+def test_cli_writes_each_single_format_and_trailing_newline(project_files, tmp_path: Path) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+    for output_format, suffix in (("text", "txt"), ("json", "json"), ("sarif", "sarif"), ("html", "html")):
+        output = tmp_path / f"report.{suffix}"
+        assert main([*_audit_args(verilog, liberty, sdc), "--format", output_format, "--output", str(output)]) == 0
+        rendered = output.read_text(encoding="utf-8")
+        assert rendered
+        if output_format in {"text", "json", "sarif"}:
+            assert rendered.endswith("\n")
+        if output_format == "html":
+            assert rendered.startswith("<!doctype html>")
+
+
+def test_cli_format_all_writes_exact_report_set(project_files, tmp_path: Path) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+    output = tmp_path / "all"
+
+    assert main([*_audit_args(verilog, liberty, sdc), "--format", "all", "--output", str(output)]) == 0
+    assert {path.name for path in output.iterdir()} == {
+        "openconstraint-report.txt",
+        "openconstraint-report.json",
+        "openconstraint-report.sarif",
+        "openconstraint-report.html",
+    }
+    assert json.loads((output / "openconstraint-report.json").read_text(encoding="utf-8"))["schema_version"] == "1.0.0"
+
+
+def test_cli_format_all_rejects_stdout_destination(project_files, capsys) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+
+    with pytest.raises(SystemExit) as caught:
+        main([*_audit_args(verilog, liberty, sdc), "--format", "all", "--output", "-"])
+    assert caught.value.code == 2
+    assert "requires --output to name a directory" in capsys.readouterr().err
+
+
+def test_mode_input_grouping_preserves_first_seen_mode_and_file_order() -> None:
+    modes = _mode_inputs(None, ["scan=a.sdc", "functional=f.sdc", "scan=b.sdc"])
+
+    assert [(mode.name, mode.sdc_paths) for mode in modes] == [
+        ("scan", ["a.sdc", "b.sdc"]),
+        ("functional", ["f.sdc"]),
+    ]
+
+
+@pytest.mark.parametrize("value", ["scan", "=scan.sdc", "scan="])
+def test_mode_input_rejects_invalid_assignment(value: str) -> None:
+    with pytest.raises(ValueError, match="expected NAME=FILE"):
+        _mode_inputs(None, [value])
+
+
+def test_mode_input_rejects_mixed_default_and_named_modes() -> None:
+    with pytest.raises(ValueError, match="either --sdc or --mode"):
+        _mode_inputs(["default.sdc"], ["scan=scan.sdc"])
+
+
+def test_cli_named_modes_emit_cross_mode_report(project_files, tmp_path: Path) -> None:
+    verilog, liberty, _ = project_files(sdc=COMPLETE_SDC)
+    functional = tmp_path / "functional.sdc"
+    scan = tmp_path / "scan.sdc"
+    functional.write_text("create_clock -name core -period 10 [get_ports clk]\n", encoding="utf-8")
+    scan.write_text("create_clock -name core -period 100 [get_ports clk2]\n", encoding="utf-8")
+    output = tmp_path / "modes.json"
+    code = main(
+        [
+            "audit",
+            "--verilog",
+            str(verilog),
+            "--liberty",
+            str(liberty),
+            "--mode",
+            f"functional={functional}",
+            "--mode",
+            f"scan={scan}",
+            "--top",
+            "top",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+            "--fail-on",
+            "never",
+        ]
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert code == 0
+    assert [mode["name"] for mode in payload["modes"]] == ["functional", "scan"]
+    assert any(finding["rule_id"] == "OC5001" for finding in payload["diagnostics"])
+
+
+def test_cli_missing_input_is_exit_2_with_concise_error(project_files, capsys, tmp_path: Path) -> None:
+    _, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+
+    with pytest.raises(SystemExit) as caught:
+        main(_audit_args(tmp_path / "missing.v", liberty, sdc))
+    assert caught.value.code == 2
+    assert "openconstraint: input error:" in capsys.readouterr().err
+
+
+def test_cli_version_uses_argparse_success_exit(capsys) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["--version"])
+
+    assert caught.value.code == 0
+    assert capsys.readouterr().out.startswith("OpenConstraint ")
+
+
+def test_demo_is_offline_deterministic_and_writes_inputs_plus_all_reports(tmp_path: Path, capsys) -> None:
+    output = tmp_path / "demo"
+
+    assert main(["demo", "--output-dir", str(output)]) == 0
+    message = capsys.readouterr().out
+    assert str(output.resolve()) in message
+    assert {path.name for path in output.iterdir()} == {
+        "inputs",
+        "openconstraint-report.txt",
+        "openconstraint-report.json",
+        "openconstraint-report.sarif",
+        "openconstraint-report.html",
+    }
+    assert {path.name for path in (output / "inputs").iterdir()} == {
+        "tiny.v",
+        "cells.lib",
+        "constraints.sdc",
+    }
+    report = json.loads((output / "openconstraint-report.json").read_text(encoding="utf-8"))
+    assert report["summary"]["coverage"] == {"functional": 100.0}

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and design discussion
+    url: https://github.com/ajayasai/OpenConstraint/discussions
+    about: Ask usage questions or discuss ideas before proposing a large change.
+  - name: Private security report
+    url: https://github.com/ajayasai/OpenConstraint/security/advisories/new
+    about: Never disclose a vulnerability or confidential reproducer in a public issue.
+  - name: Private Code of Conduct report
+    url: https://github.com/ajayasai/OpenConstraint/security/advisories/new
+    about: Prefix the private report title with [Code of Conduct].

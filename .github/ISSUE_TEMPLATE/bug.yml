@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible crash or incorrect program behavior.
+title: "[Bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reducing the problem. Do not attach proprietary netlists, Liberty/PDK data, SDC, credentials, or customer names. Use a synthetic or redacted reproducer. Report security issues privately.
+  - type: input
+    id: version
+    attributes:
+      label: OpenConstraint version
+      placeholder: "openconstraint --version"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, architecture, Python version, and installation method.
+      placeholder: "Ubuntu 24.04 x86_64, Python 3.13, source checkout"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal synthetic reproducer
+      description: Link a small public repository or paste the smallest non-confidential inputs.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include complete error text or the relevant report fragment.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report contains no confidential or proprietary design data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

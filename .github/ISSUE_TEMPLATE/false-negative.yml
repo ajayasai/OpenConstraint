@@ -1,0 +1,50 @@
+name: Missed diagnostic
+description: A documented rule does not fire on a static condition it should detect.
+title: "[False negative]: "
+labels: [rules, false-negative, triage]
+body:
+  - type: markdown
+    attributes:
+      value: "A clean audit is not sign-off proof. Submit only synthetic or redacted data."
+  - type: input
+    id: version
+    attributes:
+      label: OpenConstraint version
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Expected diagnostic ID
+      placeholder: OC2101
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal synthetic Verilog, Liberty, and SDC
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Actual report
+      description: Include text or the relevant JSON fragment.
+    validations:
+      required: true
+  - type: textarea
+    id: reasoning
+    attributes:
+      label: Why the rule should fire
+      description: Cite the documented condition and identify any relevant object names.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I reviewed the supported parser subset and rule limitations.
+          required: true
+        - label: This report contains no confidential or proprietary data.
+          required: true
