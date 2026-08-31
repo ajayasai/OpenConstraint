@@ -68,7 +68,8 @@ openconstraint audit \
 
 - Malformed Tcl grouping or modeled-command grammar without evaluating the Tcl
   program.
-- A strict nine-command static allowlist; dynamic dispatch and every other
+- A strict static allowlist of nine constraint commands plus a validated
+  literal `current_design` context directive; dynamic dispatch and every other
   top-level command fail closed instead of being treated as inert.
 - Incomplete structural models caused by ignored, inferred, malformed, or
   truncated Verilog/Liberty/elaboration input.

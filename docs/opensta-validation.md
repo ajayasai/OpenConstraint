@@ -44,7 +44,10 @@ non-executing static rule pipeline used for input SDC. This can expose issues in
 objects or constraints produced after OpenSTA evaluates trusted Tcl. A finding
 whose rule, message, and evidence are not already present is merged into the
 active mode and top-level diagnostics with an `<opensta-effective:MODE>` source
-location.
+location. OpenSTA's writer emits a `current_design` prologue; the static parser
+accepts that context directive only when it has one literal operand equal to
+the elaborated top. Dynamic, missing, extra, or mismatched design contexts fail
+closed.
 
 The report's per-mode `effective_audit` object records effective coverage,
 total and newly merged diagnostic counts, normalized static/effective semantic

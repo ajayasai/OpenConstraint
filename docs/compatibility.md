@@ -55,15 +55,17 @@ commands.
 
 ## SDC commands modeled
 
-The following table is the complete top-level static allowlist—exactly nine
-commands. Each has its own source-pinned option/operand grammar. Modeled
-unambiguous option abbreviations follow OpenSTA's declaration-order matching;
-repeatable `-through` and `-group` operands require their exact spelling.
-Foreign options, missing operands, malformed Tcl words, and invalid positional
-shapes produce `OC0001`, do not mutate modeled state, and force `0.0/F`.
+The following table is the complete top-level static allowlist: nine constraint
+commands plus one context assertion. Each has its own source-pinned
+option/operand grammar. Modeled unambiguous option abbreviations follow
+OpenSTA's declaration-order matching; repeatable `-through` and `-group`
+operands require their exact spelling. Foreign options, missing operands,
+malformed Tcl words, and invalid positional shapes produce `OC0001`, do not
+mutate modeled state, and force `0.0/F`.
 
 | Command | Static semantics used by the beta |
 | --- | --- |
+| `current_design` | Exactly one non-evaluated literal name matching the elaborated top; treated as a context assertion rather than hierarchical context switching |
 | `create_clock` | [Identity/target/additive shape](rules/OC2006.md), zero-or-one positional target word, positive period, explicit waveform sanity, and redefinition |
 | `create_generated_clock` | Exactly one positional target word plus source, master, divide/multiply/duty, three-edge/edge-shift, invert, combinational, and additive-transform validation |
 | `set_input_delay` | Exact delay/target arity, finite value, singular clock/reference-pin resolution, input/inout direction, min/max and rise/fall slots, clock edge, and OpenSTA-compatible replacement/merge replay |
@@ -300,7 +302,10 @@ timestamp-free effective SDC whose SHA-256 is recorded. A successful effective
 SDC is then parsed by the same static subset: new semantic diagnostics are
 merged into the active result, and separate normalized static/effective
 semantic digests and effective coverage are reported. The digest includes the
-canonical active I/O-delay state rather than raw I/O command history.
+canonical active I/O-delay state rather than raw I/O command history. The
+OpenSTA-emitted `current_design` prologue is accepted only as a single literal
+name matching the elaborated top; it never enables general Tcl evaluation or
+hierarchical context switching.
 
 The default timeout is 120 seconds per version query/mode and can be changed
 with `--opensta-timeout`. A failed mode emits OC6001. This validates that the

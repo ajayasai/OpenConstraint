@@ -38,10 +38,11 @@ An explicit optional branch runs after the static audit:
 
 The Tcl lexer separates commands and words while tracking braces, quotes,
 brackets, comments, continuations, and source locations. It does not evaluate
-the tokens. The SDC layer has an exact nine-command allowlist, a distinct
-option/operand grammar for each modeled command, and command-specific object
-query grammars. Every other top-level command fails closed as `OC0003` rather
-than being assumed inert.
+the tokens. The SDC layer has an exact allowlist of nine constraint commands
+plus a literal `current_design` context directive, a distinct option/operand
+grammar for each modeled command, and command-specific object-query grammars.
+The context name must match the elaborated top. Every other top-level command
+fails closed as `OC0003` rather than being assumed inert.
 
 The Liberty reader extracts leaf-cell pin direction, sequential groups, data
 pins, clock pins, and declared combinational dependencies from output

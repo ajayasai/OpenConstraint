@@ -103,11 +103,12 @@ descendant processes an SDC could create.
 
 The lexer understands enough Tcl grouping to identify SDC commands and nested
 object queries. The static model accepts exactly nine top-level constraint
-commands and applies a distinct grammar to each. Every other command or dynamic
-command name produces `OC0003`; malformed grouping/command grammar produces
-`OC0001`; a query containing a Tcl variable or unsupported nested expression
-produces `OC1003` or `OC1004`. Each of those four errors forces the affected
-mode's trusted coverage to `0.0/F`; none of the syntax is executed.
+commands plus a literal `current_design` assertion matching the elaborated top,
+and applies a distinct grammar to each. Every other command or dynamic command
+name produces `OC0003`; malformed grouping/command grammar produces `OC0001`;
+a query containing a Tcl variable or unsupported nested expression produces
+`OC1003` or `OC1004`. Each of those four errors forces the affected mode's
+trusted coverage to `0.0/F`; none of the syntax is executed.
 Recognized selectors are modeled only in documented collection-valued
 positions. A selector substituted into a scalar option or effective scalar
 positional is retained for query auditing but makes the outer command opaque

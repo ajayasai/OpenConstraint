@@ -218,6 +218,10 @@ _EXCEPTION_VALUE_OPTIONS = (
 )
 _EXCEPTION_THROUGH_OPTIONS = ("-through", "-rise_through", "-fall_through")
 _COMMAND_GRAMMARS: dict[str, _CommandGrammar] = {
+    # OpenSTA's ``write_sdc`` emits this single context directive before the
+    # constraint commands.  It is statically safe only with one literal
+    # design name; the engine verifies that name against the elaborated top.
+    "current_design": _CommandGrammar((), ()),
     "create_clock": _CommandGrammar(
         ("-name", "-period", "-waveform", "-comment"),
         ("-add",),
@@ -317,6 +321,8 @@ _COLLECTION_SELECTOR_OPTIONS: dict[str, frozenset[str]] = {
 def _selector_positional_is_opaque(command_name: str, positional_index: int) -> bool:
     """Return whether a selector occupies a scalar/unsupported positional role."""
 
+    if command_name == "current_design":
+        return True
     if command_name in {"set_input_delay", "set_output_delay"}:
         return positional_index == 0
     if command_name in {"set_multicycle_path", "set_max_delay", "set_min_delay"}:
@@ -606,6 +612,23 @@ def _parse_modeled_command(parsed: ParsedCommand, words: list[str], grammar: _Co
         index += 1
 
 
+def _parse_current_design(parsed: ParsedCommand, words: list[str]) -> None:
+    """Parse OpenSTA's direct one-argument context command.
+
+    Unlike the constraint commands, ``current_design`` does not use
+    ``parse_key_args``.  A literal design name beginning with ``-`` is
+    therefore an operand, not an option.  Evaluated names remain opaque.
+    """
+
+    for raw_word in words:
+        selector = _parse_selector(raw_word, parsed.location)
+        value = _decode_command_argument(parsed, raw_word)
+        parsed.positionals.append(raw_word if selector is not None else value)
+        if selector is not None:
+            parsed.selectors.append(selector)
+            parsed.opaque_substitutions.append(raw_word)
+
+
 def _parse_generic_command(parsed: ParsedCommand, words: list[str]) -> None:
     """Retain the broad parser for commands outside the modeled audit set."""
 
@@ -652,7 +675,13 @@ def _parse_command(command: TclCommand) -> ParsedCommand:
             parsed.opaque_substitutions.append(word)
 
     grammar = _COMMAND_GRAMMARS.get(command.name)
-    if grammar is None:
+    if command.name == "current_design":
+        _parse_current_design(parsed, words)
+        if len(parsed.positionals) != 1:
+            parsed.parse_errors.append(
+                f"current_design requires exactly one literal design name; got {len(parsed.positionals)}"
+            )
+    elif grammar is None:
         _parse_generic_command(parsed, words)
     else:
         _parse_modeled_command(parsed, words, grammar)

@@ -1105,6 +1105,20 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                     state.delayed_inputs = delayed_inputs
                     state.delayed_outputs = delayed_outputs
                 continue
+            if command.name == "current_design":
+                selected_top = command.positionals[0]
+                if selected_top != design.top:
+                    _finding(
+                        state,
+                        "OC0001",
+                        Severity.ERROR,
+                        f"current_design selects {selected_top!r}, but the elaborated top is {design.top!r}",
+                        command.location,
+                        "The static backend has one elaborated design context and cannot safely apply constraints in another context.",
+                        "Select the elaborated top, split hierarchical contexts into separate audits, or validate the original flow with OpenSTA.",
+                        {"selected_design": selected_top, "elaborated_top": design.top},
+                    )
+                continue
             if command.name == "set_input_delay":
                 _collect_io_delay(state, command, design, "input")
             elif command.name == "set_output_delay":

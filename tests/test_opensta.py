@@ -139,6 +139,7 @@ set_input_delay 1 -clock core [get_ports {clk2 data spare}]
 set_output_delay 2 -clock core [all_outputs]
 """
     explicit_sdc = """
+current_design top
 create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
 set_input_delay 1 -clock core [get_ports {clk2 data spare}]
 set_output_delay 2 -clock core [all_outputs]

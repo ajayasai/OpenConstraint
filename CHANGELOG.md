@@ -20,8 +20,9 @@ _No changes yet._
   `OC4002` for malformed exception or clock-group definitions, with dedicated
   rule documentation and reviewed semantic-accuracy cases.
 - Stable error `OC0003` for dynamic command dispatch and every command outside
-  the exact nine-command static allowlist; affected modes now receive zero
-  trusted coverage instead of a clean score.
+  the exact allowlist of nine constraint commands plus a validated literal
+  `current_design` directive; affected modes now receive zero trusted coverage
+  instead of a clean score.
 - A versioned, occurrence-level accuracy corpus with closed JSON Schemas and a
   CI gate that reports true positives, false positives, false negatives,
   precision, and recall without inflating scores for unlabeled behavior.
@@ -56,10 +57,11 @@ _No changes yet._
 - I/O-delay commands now require exactly one delay and one target collection,
   matching OpenSTA's positional arity and preventing rejected extra targets
   from satisfying missing-delay or coverage obligations.
-- The nine modeled SDC commands now use separate source-pinned option and
-  operand grammars. Foreign or missing options, malformed decoded words, and
-  invalid positional shapes fail closed without mutating modeled state, while
-  nested selectors remain available as diagnostic evidence.
+- The nine modeled constraint commands and literal `current_design` context
+  assertion now use separate source-pinned operand grammars. Foreign or missing
+  options, malformed decoded words, and invalid positional shapes fail closed
+  without mutating modeled state, while nested selectors remain available as
+  diagnostic evidence.
 - Tcl backslash-newline folding now consumes following spaces/tabs in every
   lexical context and preserves Tcl's odd/even comment-continuation behavior.
   Selector substitutions in scalar options or effective scalar positionals

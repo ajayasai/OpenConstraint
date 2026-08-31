@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from openconstraint.engine import audit_sdc_text
 from openconstraint.parsers.sdc import MODELED_SDC_COMMANDS, parse_sdc_text
 
 
@@ -9,8 +10,9 @@ def _ids(result) -> list[str]:
     return [finding.rule_id for finding in result.diagnostics]
 
 
-def test_static_command_allowlist_is_exactly_the_nine_modeled_sdc_commands() -> None:
+def test_static_command_allowlist_is_exactly_nine_constraints_plus_context_directive() -> None:
     assert {
+        "current_design",
         "create_clock",
         "create_generated_clock",
         "set_input_delay",
@@ -21,6 +23,62 @@ def test_static_command_allowlist_is_exactly_the_nine_modeled_sdc_commands() -> 
         "set_min_delay",
         "set_clock_groups",
     } == MODELED_SDC_COMMANDS
+
+
+def test_matching_literal_current_design_is_a_safe_context_directive(audit_factory) -> None:
+    result = audit_factory(
+        """
+current_design top
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [get_ports {clk2 data spare}]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    )
+
+    assert not {"OC0001", "OC0003"} & set(_ids(result))
+    assert result.modes[0].coverage.score == 100.0
+
+
+@pytest.mark.parametrize("constraint", ["current_design", "current_design top extra"])
+def test_current_design_requires_exactly_one_literal_name(audit_factory, constraint: str) -> None:
+    result = audit_factory(constraint)
+
+    assert "OC0001" in _ids(result)
+    assert result.modes[0].coverage.score == 0.0
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "current_design $top",
+        'current_design "prefix$top"',
+        "current_design [get_ports clk]",
+        "current_design [list top]",
+        "current_design {*}$tops",
+    ],
+)
+def test_current_design_rejects_evaluated_names(audit_factory, constraint: str) -> None:
+    result = audit_factory(constraint)
+
+    assert "OC0003" in _ids(result)
+    assert result.modes[0].coverage.score == 0.0
+
+
+def test_current_design_accepts_a_literal_name_beginning_with_dash(design_factory) -> None:
+    design = design_factory()
+    design.top = "-top"
+
+    result = audit_sdc_text(design, "default", "current_design {-top}\n")
+
+    assert not {"OC0001", "OC0003"} & set(_ids(result))
+
+
+def test_current_design_must_match_the_elaborated_top(audit_factory) -> None:
+    result = audit_factory("current_design another_top")
+
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC0001")
+    assert finding.evidence == {"selected_design": "another_top", "elaborated_top": "top"}
+    assert result.modes[0].coverage.score == 0.0
 
 
 @pytest.mark.parametrize("invalid_option", ["-rise", "-bogus"])
