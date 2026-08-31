@@ -42,7 +42,7 @@ jobs:
       - name: Install the protected beta release
         run: >-
           python -m pip install
-          https://github.com/ajayasai/OpenConstraint/releases/download/v0.1.0-beta/openconstraint-0.1.0b0-py3-none-any.whl
+          https://github.com/ajayasai/OpenConstraint/releases/download/v0.2.0-beta/openconstraint-0.2.0b0-py3-none-any.whl
       - name: Audit constraints
         id: constraint-audit
         continue-on-error: true
@@ -97,5 +97,5 @@ time with `openconstraint schema`.
 
 Start by running `--fail-on never`, reviewing rule evidence and component
 denominators. Then gate errors, establish an evidence-backed coverage threshold,
-and finally consider warnings. v0.1 does not yet provide native suppressions or
+and finally consider warnings. v0.2 does not yet provide native suppressions or
 waiver expiry; avoid hiding findings with log filtering.

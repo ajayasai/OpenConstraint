@@ -28,10 +28,16 @@ jobs:
 
       - name: Prepare static dashboard
         run: |
-          mkdir -p _site/schemas
+          mkdir -p _site/schemas _site/benchmarks/overlays
           cp examples/tiny/expected-modes/openconstraint-report.html _site/index.html
           cp examples/tiny/expected-broken/openconstraint-report.html _site/broken.html
           cp src/openconstraint/schemas/openconstraint-report.schema.json _site/schemas/openconstraint-report.schema.json
+          cp benchmarks/manifest.json benchmarks/baseline.json _site/benchmarks/
+          cp benchmarks/overlays/*.sdc _site/benchmarks/overlays/
+          cp benchmarks/schemas/manifest.schema.json _site/schemas/benchmark-manifest.schema.json
+          cp benchmarks/schemas/fetch.schema.json _site/schemas/benchmark-fetch.schema.json
+          cp benchmarks/schemas/result.schema.json _site/schemas/benchmark-result.schema.json
+          cp benchmarks/schemas/baseline.schema.json _site/schemas/benchmark-baseline.schema.json
           touch _site/.nojekyll
 
       - name: Upload Pages artifact

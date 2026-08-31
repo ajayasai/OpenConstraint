@@ -12,6 +12,12 @@ dist/
 site/
 reports/
 openconstraint-demo-report/
+.benchmark-cache/
+fuzz-artifacts/
+crash-*
+leak-*
+oom-*
+timeout-*
 *.html
 !docs/**/*.html
 !examples/**/*.html

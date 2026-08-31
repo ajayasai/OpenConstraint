@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/benchmark-result.schema.json",
+  "title": "OpenConstraint benchmark result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "tool", "environment", "suite", "manifest_sha256", "offline", "summary", "cases"],
+  "properties": {
+    "kind": {"const": "benchmark-result"},
+    "schema_version": {"const": "1.0.0"},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {"name": {"const": "OpenConstraint"}, "version": {"type": "string"}}
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python_version",
+        "python_implementation",
+        "system",
+        "release",
+        "machine",
+        "processor",
+        "cpu_count"
+      ],
+      "properties": {
+        "python_version": {"type": "string", "minLength": 1},
+        "python_implementation": {"type": "string", "minLength": 1},
+        "system": {"type": "string", "minLength": 1},
+        "release": {"type": "string"},
+        "machine": {"type": "string"},
+        "processor": {"type": ["string", "null"]},
+        "cpu_count": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {"id": {"type": "string"}, "name": {"type": "string"}}
+    },
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "offline": {"type": "boolean"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_count", "passed", "regressions", "errors"],
+      "properties": {
+        "case_count": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "regressions": {"type": "integer", "minimum": 0},
+        "errors": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "dataset",
+          "case",
+          "description",
+          "tags",
+          "status",
+          "baseline_status",
+          "differences",
+          "source_sha256"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "dataset": {"type": "string"},
+          "case": {"type": "string"},
+          "description": {"type": "string"},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "status": {"enum": ["passed", "regression", "error"]},
+          "baseline_status": {"enum": ["not_checked", "match", "mismatch"]},
+          "differences": {"type": "array", "items": {"type": "string"}},
+          "source_sha256": {
+            "type": "object",
+            "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          },
+          "input_bytes": {"type": "integer", "minimum": 0},
+          "analysis_duration_seconds": {"type": "number", "minimum": 0},
+          "peak_python_bytes": {"type": "integer", "minimum": 0},
+          "semantic": {"$ref": "#/$defs/semantic"},
+          "error": {"type": "string"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "error"}}, "required": ["status"]},
+            "then": {"required": ["error"]},
+            "else": {"required": ["input_bytes", "analysis_duration_seconds", "peak_python_bytes", "semantic"]}
+          }
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "nonnegativeInteger": {"type": "integer", "minimum": 0},
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top",
+        "ports",
+        "nets",
+        "instances",
+        "sequential_instances",
+        "sequential_endpoints",
+        "parser_warning_count",
+        "parser_warnings",
+        "inventory_sha256"
+      ],
+      "properties": {
+        "top": {"type": "string", "minLength": 1},
+        "ports": {"$ref": "#/$defs/nonnegativeInteger"},
+        "nets": {"$ref": "#/$defs/nonnegativeInteger"},
+        "instances": {"$ref": "#/$defs/nonnegativeInteger"},
+        "sequential_instances": {"$ref": "#/$defs/nonnegativeInteger"},
+        "sequential_endpoints": {"$ref": "#/$defs/nonnegativeInteger"},
+        "parser_warning_count": {"$ref": "#/$defs/nonnegativeInteger"},
+        "parser_warnings": {"type": "array", "items": {"type": "string"}},
+        "inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "column"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "line": {"type": "integer", "minimum": 1},
+        "column": {"type": "integer", "minimum": 1}
+      }
+    },
+    "jsonValue": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "number"},
+        {"type": "string"},
+        {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}}
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity", "mode", "message", "location", "evidence"],
+      "properties": {
+        "rule_id": {"type": "string", "pattern": "^OC[0-9]{4}$"},
+        "severity": {"enum": ["error", "warning", "note"]},
+        "mode": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "location": {"$ref": "#/$defs/location"},
+        "evidence": {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}}
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "errors", "warnings", "notes", "by_rule", "findings"],
+      "properties": {
+        "total": {"$ref": "#/$defs/nonnegativeInteger"},
+        "errors": {"$ref": "#/$defs/nonnegativeInteger"},
+        "warnings": {"$ref": "#/$defs/nonnegativeInteger"},
+        "notes": {"$ref": "#/$defs/nonnegativeInteger"},
+        "by_rule": {
+          "type": "object",
+          "propertyNames": {"pattern": "^OC[0-9]{4}$"},
+          "additionalProperties": {"$ref": "#/$defs/nonnegativeInteger"}
+        },
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "targets", "period", "waveform", "generated", "source_targets", "master_clock"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "period": {"type": ["number", "null"]},
+        "waveform": {"type": ["array", "null"], "items": {"type": "number"}},
+        "generated": {"type": "boolean"},
+        "source_targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "master_clock": {"type": ["string", "null"]}
+      }
+    },
+    "exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to", "through"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "from": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "to": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "through": {
+          "type": "array",
+          "items": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "coverageComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["covered", "total", "percentage", "weight"],
+      "properties": {
+        "covered": {"$ref": "#/$defs/nonnegativeInteger"},
+        "total": {"$ref": "#/$defs/nonnegativeInteger"},
+        "percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "grade", "components"],
+      "properties": {
+        "score": {"type": "number", "minimum": 0, "maximum": 100},
+        "grade": {"enum": ["A", "B", "C", "D", "F"]},
+        "components": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "additionalProperties": {"$ref": "#/$defs/coverageComponent"}
+        }
+      }
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clocks", "exceptions", "coverage"],
+      "properties": {
+        "clocks": {"type": "array", "items": {"$ref": "#/$defs/clock"}},
+        "exceptions": {"type": "array", "items": {"$ref": "#/$defs/exception"}},
+        "coverage": {"$ref": "#/$defs/coverage"}
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["design", "modes", "diagnostics"],
+      "properties": {
+        "design": {"$ref": "#/$defs/design"},
+        "modes": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "additionalProperties": {"$ref": "#/$defs/mode"}
+        },
+        "diagnostics": {"$ref": "#/$defs/diagnostics"}
+      }
+    }
+  }
+}

@@ -1,0 +1,110 @@
+name: Public design benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/benchmarks.yml"
+      - "benchmarks/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/benchmarks.yml"
+      - "benchmarks/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+  schedule:
+    - cron: "41 4 * * 4"
+  workflow_dispatch:
+
+concurrency:
+  group: benchmarks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  openroad:
+    name: OpenROAD SKY130HD semantic baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install OpenConstraint
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Fetch checksum-pinned public inputs
+        env:
+          OPENCONSTRAINT_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          openconstraint benchmark fetch \
+            --manifest benchmarks/manifest.json \
+            --cache-dir "${{ runner.temp }}/openconstraint-benchmarks" \
+            --output benchmark-fetch.json
+
+      - name: Reproduce the reviewed semantic baseline offline
+        run: |
+          openconstraint benchmark run \
+            --manifest benchmarks/manifest.json \
+            --cache-dir "${{ runner.temp }}/openconstraint-benchmarks" \
+            --offline \
+            --baseline benchmarks/baseline.json \
+            --output benchmark-result.json
+
+      - name: Write benchmark summary
+        if: always() && hashFiles('benchmark-result.json') != ''
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path("benchmark-result.json").read_text(encoding="utf-8"))
+          lines = [
+              "## OpenROAD SKY130HD benchmark",
+              "",
+              "| Case | Status | Instances | Endpoints | Coverage by mode | Instrumented s | Traced peak MiB |",
+              "| --- | --- | ---: | ---: | --- | ---: | ---: |",
+          ]
+          for case in result["cases"]:
+              semantic = case.get("semantic", {})
+              design = semantic.get("design", {})
+              modes = semantic.get("modes", {})
+              rendered_coverage = ", ".join(
+                  f"{name}: {mode['coverage']['score']:.1f}%" for name, mode in modes.items()
+              )
+              peak_mib = case.get("peak_python_bytes", 0) / 1024 / 1024
+              lines.append(
+                  f"| {case['id']} | {case['status']} | {design.get('instances', 0):,} | "
+                  f"{design.get('sequential_endpoints', 0):,} | {rendered_coverage} | "
+                  f"{case.get('analysis_duration_seconds', 0):.3f} | {peak_mib:.1f} |"
+              )
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+
+      - name: Preserve benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openroad-sky130hd-benchmark
+          path: |
+            benchmark-fetch.json
+            benchmark-result.json
+          if-no-files-found: error
+          retention-days: 30

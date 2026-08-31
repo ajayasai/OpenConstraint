@@ -38,6 +38,20 @@ python -m build
 python -m twine check dist/*
 ```
 
+Parser changes must also preserve the property and seed-corpus suites:
+
+```console
+pytest tests/test_parser_properties.py tests/test_fuzz_seed_corpus.py
+```
+
+Run the Atheris targets from Linux according to [fuzz/README.md](fuzz/README.md).
+Never add proprietary design data to a corpus or crash reproducer.
+
+Changes to parsing, elaboration, coverage, or diagnostics should reproduce the
+public OpenROAD semantic baseline before merge. Follow
+[benchmarks/README.md](benchmarks/README.md); review baseline updates rather
+than regenerating them blindly.
+
 ## Adding or changing a diagnostic
 
 Each diagnostic is a user-facing compatibility surface. A contribution must:

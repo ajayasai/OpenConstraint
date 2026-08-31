@@ -7,8 +7,10 @@ default static backend parses but does not execute those files. In particular,
 it never passes SDC to a Tcl interpreter.
 
 This substantially reduces risk compared with evaluating an arbitrary SDC
-program, but it does not make hostile input risk-free. v0.1.0-beta has no hard
-file-size, memory, or runtime limits.
+program, but it does not make hostile input risk-free. v0.2.0-beta bounds
+pathological Verilog bus expansion, Liberty group nesting, and structural
+hierarchy depth, but it does not impose a general file-size, memory, or runtime
+quota.
 
 ## Assets to protect
 
@@ -77,14 +79,27 @@ explicit `--opensta` path.
 ## Availability risks
 
 A hostile file can attempt to consume CPU or memory through extreme size,
-nesting, identifier count, regular-expression cost, or hierarchy. Until hard
-limits are implemented:
+identifier count, regular-expression cost, or structure. Targeted parser limits
+cap Tcl retention at 50,000 commands and 1,000 detailed issues; Liberty
+retention at 750,000 tokens, 120,000 nodes, and 1,000 detailed warnings; bus
+expansion at 65,536 bits; expanded names at 131,072 per parsed Verilog file;
+Verilog connections at 65,536 per instance; structural statements at 200,000;
+parsed Verilog modules at 10,000; detailed Verilog warnings at 1,000;
+Liberty/hierarchy depth at 256 levels; and elaborated structural objects at
+262,144. A deterministic summary warning records cardinality truncation.
+These are defense-in-depth controls, not a sandbox or a complete resource
+budget. For untrusted inputs:
 
 - run untrusted audits in a disposable container or restricted CI job;
 - set OS/container CPU, memory, file-size, and wall-clock limits;
 - mount inputs read-only and use a dedicated output directory;
 - use a non-privileged account with no secrets or network credentials;
 - avoid running pull-request artifacts in a privileged release workflow.
+
+Hypothesis properties and committed corpus replay run in the ordinary CI suite.
+Separate Atheris/libFuzzer jobs continuously mutate all three parser surfaces
+with finite per-input and workflow timeouts; any crash reproducer is retained as
+a short-lived CI artifact for minimization and regression testing.
 
 ## CI guidance
 

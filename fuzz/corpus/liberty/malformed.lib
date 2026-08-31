@@ -1,0 +1,4 @@
+library (broken) {
+  cell (UNFINISHED) {
+    pin (A) { direction : input
+    ff (IQ, IQN) { next_state : A; clocked_on : "CK;

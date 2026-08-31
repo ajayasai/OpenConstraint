@@ -1,4 +1,4 @@
-OpenConstraint 0.1.0b0 — tiny_top
+OpenConstraint 0.2.0b0 — tiny_top
 Design: 8 ports, 3 cells, 2 sequential endpoints
 
 Mode default: 57.50% structural coverage (grade D)

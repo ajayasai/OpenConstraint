@@ -1,0 +1,9 @@
+library (synthetic) {
+  cell (DFFR) {
+    pin (D) { direction : input; }
+    pin (CK) { direction : input; clock : true; }
+    pin (RN) { direction : input; }
+    pin (Q) { direction : output; }
+    ff (IQ, IQN) { next_state : D; clocked_on : "CK & RN"; }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0.0",
+  "suite": {
+    "id": "openroad-sky130hd",
+    "name": "OpenROAD SKY130HD public netlists",
+    "description": "Checksum-pinned AES, Ibex, and JPEG post-synthesis netlists with upstream SDC and a shared SKY130HD Liberty input. Third-party files are fetched on demand and never vendored."
+  },
+  "suite_files": [
+    {
+      "path": "overlays/aes-coverage-reference.sdc",
+      "sha256": "5d9f13c922825ebbf076d62edc8a8b96aff4308e45d62adc08961fcc36cf8753",
+      "size_bytes": 370
+    },
+    {
+      "path": "overlays/ibex-coverage-reference.sdc",
+      "sha256": "de977d293cea0b0a73de78d0aafb2f9ae62c1014f3a707026b518b5271b4f28d",
+      "size_bytes": 391
+    },
+    {
+      "path": "overlays/jpeg-coverage-reference.sdc",
+      "sha256": "e2b1525ca531b6190c8a18b2fc6aa6c5e16df31851e3feab6b02ba0da9c062e3",
+      "size_bytes": 366
+    }
+  ],
+  "datasets": [
+    {
+      "id": "openroad-sky130hd",
+      "description": "Files pinned to the official OpenROAD 26Q3 commit a9147cf3aebe65e058bb3fa89c1f9e524488dbb8.",
+      "artifacts": [
+        {
+          "id": "sky130hd-liberty",
+          "url": "https://api.github.com/repos/The-OpenROAD-Project/OpenROAD/contents/test/sky130hd/sky130_fd_sc_hd__tt_025C_1v80.lib?ref=a9147cf3aebe65e058bb3fa89c1f9e524488dbb8",
+          "sha256": "92eb4e93a3d4c2563018ac81cdec2f02fdeaced9b39337ed5c141fa63e0ad8f8",
+          "size_bytes": 12800126,
+          "archive": "none",
+          "filename": "sky130_fd_sc_hd__tt_025C_1v80.lib",
+          "unpacked_size_limit_bytes": 12800126,
+          "license": {
+            "spdx": "Apache-2.0",
+            "url": "https://github.com/google/skywater-pdk-libs-sky130_fd_sc_hd/blob/ac7fb61f06e6470b94e8afdf7c25268f62fbd7b1/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Copyright the SkyWater PDK Authors. Licensed under Apache License 2.0; preserve the license and any applicable NOTICE attribution. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "aes-netlist",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/aes_sky130hd.v",
+          "sha256": "be350b9b1e50213194c15fb42e82d77362cf780fc0c363b02b0ee609b2b80742",
+          "size_bytes": 2135099,
+          "archive": "none",
+          "filename": "aes_sky130hd.v",
+          "unpacked_size_limit_bytes": 2135099,
+          "license": {
+            "spdx": "LicenseRef-ASICs-World-BSD-like",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/aes/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Copyright (C) 2000-2009, ASICs World Services, LTD., AUTHORS. Custom permissive terms expressly permit redistribution in source, netlist, binary, and silicon forms; retain copyright, conditions, disclaimer, and non-endorsement terms. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "aes-sdc",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/aes_sky130hd.sdc",
+          "sha256": "92fd96c157351e975e78a1ef9f99fe7cc20d8e5c3516fd1e63186e6ed0c94d11",
+          "size_bytes": 70,
+          "archive": "none",
+          "filename": "aes_sky130hd.sdc",
+          "unpacked_size_limit_bytes": 70,
+          "license": {
+            "spdx": "LicenseRef-ASICs-World-BSD-like",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/aes/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Copyright (C) 2000-2009, ASICs World Services, LTD., AUTHORS. Custom permissive terms expressly permit redistribution in source, netlist, binary, and silicon forms; retain copyright, conditions, disclaimer, and non-endorsement terms. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "ibex-netlist",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/ibex_sky130hd.v",
+          "sha256": "691b73ca8b8aaf78ade522627f1181b642867f3ec03d65a86f8ed8d3629d9ff1",
+          "size_bytes": 2300566,
+          "archive": "none",
+          "filename": "ibex_sky130hd.v",
+          "unpacked_size_limit_bytes": 2300566,
+          "license": {
+            "spdx": "Apache-2.0",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/ibex_sv/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Ibex is licensed under Apache License 2.0; preserve the license and any applicable attribution or NOTICE material. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "ibex-sdc",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/ibex_sky130hd.sdc",
+          "sha256": "dbc8ffbf4a7fc8cbf1587b058fd1c9bf7ed56ec63bcb3b23894b3b618fcb00bf",
+          "size_bytes": 91,
+          "archive": "none",
+          "filename": "ibex_sky130hd.sdc",
+          "unpacked_size_limit_bytes": 91,
+          "license": {
+            "spdx": "Apache-2.0",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/ibex_sv/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Ibex is licensed under Apache License 2.0; preserve the license and any applicable attribution or NOTICE material. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "jpeg-netlist",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/jpeg_sky130hd.v",
+          "sha256": "f1964e41b8d8255c730d564b8b0fad9861da4df74f31733fb1e8449282660e32",
+          "size_bytes": 6495524,
+          "archive": "none",
+          "filename": "jpeg_sky130hd.v",
+          "unpacked_size_limit_bytes": 6495524,
+          "license": {
+            "spdx": "LicenseRef-ASICs-World-BSD-like",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/jpeg/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Copyright (C) 2000-2009, ASICs World Services, LTD., AUTHORS. Custom permissive terms expressly permit redistribution in source, netlist, binary, and silicon forms; retain copyright, conditions, disclaimer, and non-endorsement terms. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        },
+        {
+          "id": "jpeg-sdc",
+          "url": "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/test/jpeg_sky130hd.sdc",
+          "sha256": "e2d86c1c6a3045a8116a43ee95a1eaaf06d1a51803b5bc30e2a47434651477d7",
+          "size_bytes": 79,
+          "archive": "none",
+          "filename": "jpeg_sky130hd.sdc",
+          "unpacked_size_limit_bytes": 79,
+          "license": {
+            "spdx": "LicenseRef-ASICs-World-BSD-like",
+            "url": "https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/adeb389e7fbf06ef6a939a895c014f69e6f7aa00/flow/designs/src/jpeg/LICENSE",
+            "repository_license_url": "https://github.com/The-OpenROAD-Project/OpenROAD/blob/a9147cf3aebe65e058bb3fa89c1f9e524488dbb8/LICENSE",
+            "notice": "Copyright (C) 2000-2009, ASICs World Services, LTD., AUTHORS. Custom permissive terms expressly permit redistribution in source, netlist, binary, and silicon forms; retain copyright, conditions, disclaimer, and non-endorsement terms. The fetched copy is also pinned inside the BSD-3-Clause OpenROAD repository."
+          }
+        }
+      ],
+      "cases": [
+        {
+          "id": "aes",
+          "description": "Medium AES cipher netlist comparing the unexecuted upstream helper call with an explicit static-coverage reference.",
+          "top": "aes_cipher_top",
+          "verilog": ["aes-netlist:aes_sky130hd.v"],
+          "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
+          "modes": {
+            "upstream-static": ["aes-sdc:aes_sky130hd.sdc"],
+            "coverage-reference": ["aes-sdc:aes_sky130hd.sdc", "suite:overlays/aes-coverage-reference.sdc"]
+          },
+          "tags": ["public", "post-synthesis", "openroad", "medium", "sky130hd"]
+        },
+        {
+          "id": "ibex",
+          "description": "Medium RISC-V core netlist comparing the unexecuted upstream helper call with an explicit static-coverage reference.",
+          "top": "ibex_core",
+          "verilog": ["ibex-netlist:ibex_sky130hd.v"],
+          "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
+          "modes": {
+            "upstream-static": ["ibex-sdc:ibex_sky130hd.sdc"],
+            "coverage-reference": ["ibex-sdc:ibex_sky130hd.sdc", "suite:overlays/ibex-coverage-reference.sdc"]
+          },
+          "tags": ["public", "post-synthesis", "openroad", "riscv", "medium", "sky130hd"]
+        },
+        {
+          "id": "jpeg",
+          "description": "Large JPEG encoder netlist stressing indexing while comparing an upstream helper call with an explicit static-coverage reference.",
+          "top": "jpeg_encoder",
+          "verilog": ["jpeg-netlist:jpeg_sky130hd.v"],
+          "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
+          "modes": {
+            "upstream-static": ["jpeg-sdc:jpeg_sky130hd.sdc"],
+            "coverage-reference": ["jpeg-sdc:jpeg_sky130hd.sdc", "suite:overlays/jpeg-coverage-reference.sdc"]
+          },
+          "tags": ["public", "post-synthesis", "openroad", "large", "sky130hd"]
+        }
+      ]
+    }
+  ]
+}

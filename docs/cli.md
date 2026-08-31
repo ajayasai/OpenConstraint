@@ -86,3 +86,24 @@ openconstraint demo --output-dir openconstraint-demo-report
 
 The destination is created if needed. Existing same-named demo inputs and
 reports may be overwritten; choose the path deliberately.
+
+## `openconstraint benchmark`
+
+Acquire checksum-pinned public inputs, run selected cases, or create a reviewed
+semantic baseline:
+
+```console
+openconstraint benchmark fetch --manifest FILE [--cache-dir DIR] [--offline]
+openconstraint benchmark run --manifest FILE [--cache-dir DIR] [--offline] [--baseline FILE]
+openconstraint benchmark baseline --manifest FILE [--cache-dir DIR] [--offline] --output FILE
+```
+
+All actions accept repeatable `--dataset ID` and `--case DATASET/CASE`
+selectors. Fetch and run write JSON to stdout by default; `--output FILE`
+redirects it. Run exits 1 for a case error or semantic-baseline mismatch and 2
+for invalid metadata, cache integrity failures, or unreadable inputs.
+
+The default cache is `.cache/openconstraint/benchmarks` below the user's home
+directory. For strict reproduction, fetch into an explicit cache and rerun with
+`--offline`. See [`benchmarks/README.md`](../benchmarks/README.md) for the
+manifest, security, licensing, and metric contracts.

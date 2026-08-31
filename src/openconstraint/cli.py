@@ -11,6 +11,14 @@ from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
 
+from openconstraint.benchmark import (
+    baseline_from_result,
+    fetch_suite,
+    load_baseline,
+    load_manifest,
+    render_benchmark_json,
+    run_suite,
+)
 from openconstraint.engine import AuditOptions, ModeInput, audit
 from openconstraint.model import SEVERITY_RANK, AuditResult, Design, Diagnostic, Severity, SourceLocation
 from openconstraint.opensta import OpenSTAError, OpenSTAValidationResult, validate_with_opensta
@@ -110,6 +118,32 @@ def _parser() -> argparse.ArgumentParser:
 
     demo_parser = subcommands.add_parser("demo", help="Run the bundled synthetic design and write every report format.")
     demo_parser.add_argument("--output-dir", default="openconstraint-demo-report", metavar="DIR")
+
+    benchmark_parser = subcommands.add_parser(
+        "benchmark", help="Fetch and run checksum-pinned public-design benchmarks."
+    )
+    benchmark_commands = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)
+    for name, help_text in (
+        ("fetch", "Populate or verify the content-addressed artifact cache."),
+        ("run", "Run benchmark cases and optionally compare a semantic baseline."),
+        ("baseline", "Write a deterministic semantic baseline from successful cases."),
+    ):
+        action = benchmark_commands.add_parser(name, help=help_text)
+        action.add_argument("--manifest", required=True, metavar="FILE")
+        action.add_argument(
+            "--cache-dir",
+            default=str(Path.home() / ".cache" / "openconstraint" / "benchmarks"),
+            metavar="DIR",
+        )
+        action.add_argument("--dataset", action="append", metavar="ID", help="Select a dataset (repeatable).")
+        action.add_argument(
+            "--case", action="append", metavar="DATASET/CASE", help="Select a qualified case (repeatable)."
+        )
+        action.add_argument("--offline", action="store_true", help="Forbid downloads and require a verified cache.")
+    benchmark_commands.choices["fetch"].add_argument("--output", default="-", metavar="FILE")
+    benchmark_commands.choices["run"].add_argument("--baseline", metavar="FILE")
+    benchmark_commands.choices["run"].add_argument("--output", default="-", metavar="FILE")
+    benchmark_commands.choices["baseline"].add_argument("--output", required=True, metavar="FILE")
     return parser
 
 
@@ -299,6 +333,29 @@ def _demo_command(output_dir: str) -> int:
     return _quality_exit(result, "error", 100.0)
 
 
+def _benchmark_command(arguments: argparse.Namespace) -> int:
+    manifest = load_manifest(arguments.manifest)
+    common = {
+        "dataset_ids": arguments.dataset,
+        "case_ids": arguments.case,
+        "offline": arguments.offline,
+    }
+    if arguments.benchmark_command == "fetch":
+        result = fetch_suite(manifest, arguments.cache_dir, **common)
+        _write(render_benchmark_json(result), arguments.output)
+        return 0
+    if arguments.benchmark_command == "run":
+        baseline = load_baseline(arguments.baseline, manifest) if arguments.baseline else None
+        result = run_suite(manifest, arguments.cache_dir, baseline=baseline, **common)
+        _write(render_benchmark_json(result), arguments.output)
+        summary = result["summary"]
+        return 1 if summary["regressions"] or summary["errors"] else 0
+    result = run_suite(manifest, arguments.cache_dir, **common)
+    baseline = baseline_from_result(result)
+    _write(render_benchmark_json(baseline), arguments.output)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
@@ -311,6 +368,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _schema_command(arguments.output)
         if arguments.command == "demo":
             return _demo_command(arguments.output_dir)
+        if arguments.command == "benchmark":
+            return _benchmark_command(arguments)
     except (OSError, UnicodeError, ValueError, OpenSTAError) as error:
         parser.exit(2, f"openconstraint: input error: {error}\n")
     return 2
