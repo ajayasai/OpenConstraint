@@ -95,7 +95,18 @@ commercial sign-off flow.
 
 The public source-pinned integration job also executes focused compatibility
 assertions directly in OpenSTA c821ad1. They verify omitted versus explicitly
-empty `get_*` patterns, Tcl quoting and whitespace preservation, modeled option
-abbreviations, patternless and brace-suppressed `-of_objects`, malformed option
-operands, empty filters, and positional arity before the effective-SDC round
-trip runs.
+empty `get_*` patterns, Tcl quoting/whitespace, backslash-produced wildcards and
+options, nested Tcl-list pattern words, singular query aliases, and modeled
+option abbreviations. They also cover patternless and brace-suppressed
+`-of_objects`, exact direction-filter properties/vocabulary, malformed option
+operands and filters, selector positional arity, regular-expression rejection,
+hierarchical pin-local names, multiplicity-sensitive singleton operands, and
+primary/generated-clock target arity before the effective-SDC round trip runs.
+The fixture additionally pins regexp exact-lookup routing and Tcl-ARE
+divergence cases, current-scope wildcard depth, literal-list cardinality,
+OpenSTA's warning-versus-error behavior for literal resolution, and invalid
+extra multicycle operands. It also pins one-pass numeric decoding and the
+warning-and-apply behavior of stray `set_false_path`/`set_clock_groups`
+positionals. OpenConstraint's stricter all-or-nothing and no-warning-state
+policies are tested separately and documented as intentional safety
+divergences.

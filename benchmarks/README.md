@@ -18,19 +18,21 @@ with the surrounding platform license.
 
 Each upstream SDC invokes OpenROAD's custom `set_all_input_output_delays`
 procedure. OpenConstraint's safe static backend does not execute project Tcl,
-so the `upstream-static` mode reports 60% structural coverage and missing I/O
-delays at that parser boundary. Those diagnostics do **not** mean the upstream
-flow omitted its delays.
+so the `upstream-static` mode emits `OC0003` and reports `0/F` trusted coverage
+at that parser boundary. Those diagnostics do **not** mean the upstream flow
+omitted its delays; they mean the static backend cannot verify the helper's
+effect without executing it.
 
-The same case also has a `coverage-reference` mode that appends a small,
-checked-in SDC overlay under [`overlays/`](overlays/). It applies the helper's
-documented 20%-of-period values to explicit non-clock input patterns and
-`all_outputs`, producing a 100% OpenConstraint coverage reference. This is
+The same case also has a `coverage-reference` mode that uses a small,
+self-contained checked-in SDC under [`overlays/`](overlays/). It recreates the
+upstream primary clock and applies the helper's documented 20%-of-period values
+to explicit non-clock input patterns and `all_outputs`, producing a 100%
+OpenConstraint coverage reference. This is
 deliberately **not** described as collection-equivalent or sign-off SDC: the
 patterns are reviewed static surrogates for a project Tcl helper, not an
 execution of that helper. Keeping both modes in one case avoids reparsing the
-large design and makes the static Tcl boundary explicit without claiming
-formal semantic equivalence.
+large design and makes the fail-closed static Tcl boundary explicit without
+claiming formal semantic equivalence.
 
 ## Reproduce a run
 

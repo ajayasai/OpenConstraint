@@ -28,6 +28,13 @@ RULES = {
             "loading",
         ),
         Rule(
+            "OC0003",
+            "unevaluated-tcl-command",
+            Severity.ERROR,
+            "A Tcl command is outside the non-executing static model.",
+            "loading",
+        ),
+        Rule(
             "OC1001",
             "zero-object-query",
             Severity.ERROR,
@@ -44,14 +51,14 @@ RULES = {
         Rule(
             "OC1003",
             "dynamic-query",
-            Severity.WARNING,
+            Severity.ERROR,
             "A Tcl-dynamic query cannot be proven by the safe static backend.",
             "queries",
         ),
         Rule(
             "OC1004",
             "unsupported-query",
-            Severity.WARNING,
+            Severity.ERROR,
             "A query feature is outside the deterministic static subset.",
             "queries",
         ),

@@ -54,6 +54,23 @@
       ]
     },
     {
+      "id": "unevaluated-tcl-control",
+      "description": "Append a valid Tcl conditional whose opaque body contains a modeled constraint and must invalidate static coverage.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "if {1} { set_false_path -from [get_ports missing_input] -to [get_ports result_a] }\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC0003",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "zero-object-query",
       "description": "Append an exception whose source collection names no design object.",
       "execution": "mutant-only",
@@ -320,6 +337,10 @@
         },
         {
           "rule_id": "OC2011",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2012",
           "count": 1
         }
       ]

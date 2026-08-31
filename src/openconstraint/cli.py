@@ -412,6 +412,7 @@ def _mode_semantics(mode: ModeResult) -> dict[str, object]:
             "qualifiers": item.qualifiers,
         }
         for item in mode.exceptions
+        if item.qualifiers.get("scope_resolvable", True) is True
     ]
     exception_records.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
     io_delay_records = effective_io_delay_semantics(mode.io_delays)
@@ -433,7 +434,10 @@ def _mode_semantics(mode: ModeResult) -> dict[str, object]:
                 "edges": list(clock.edges) if clock.edges is not None else None,
                 "edge_shift": list(clock.edge_shift) if clock.edge_shift is not None else None,
             }
-            for clock in sorted(mode.clocks.values(), key=lambda item: item.name)
+            for clock in sorted(
+                (clock for name, clock in mode.clocks.items() if name in mode.valid_clocks),
+                key=lambda item: item.name,
+            )
         ],
         "exceptions": exception_records,
         "io_delays": io_delay_records,

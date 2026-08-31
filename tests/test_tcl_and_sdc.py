@@ -64,6 +64,34 @@ def test_tcl_backslash_newline_continues_one_command_and_keeps_start_line() -> N
     )
 
 
+@pytest.mark.parametrize(("backslash_count", "expected_names"), [(1, ["set"]), (2, ["create_clock", "set"])])
+def test_tcl_backslash_newline_comment_continuation_uses_backslash_parity(
+    backslash_count: int, expected_names: list[str]
+) -> None:
+    commands, issues = parse_tcl(
+        "# continued comment "
+        + "\\" * backslash_count
+        + "\ncreate_clock -name hidden -period 10 [get_ports clk]\nset visible 1\n",
+        "comment-continuation.sdc",
+    )
+
+    assert not issues
+    assert [command.name for command in commands] == expected_names
+
+
+@pytest.mark.parametrize(("opening", "closing"), [("{", "}"), ('"', '"')])
+def test_tcl_backslash_newline_collapses_following_horizontal_whitespace_inside_groups(
+    opening: str, closing: str
+) -> None:
+    command = parse_sdc_text(
+        f"create_clock -name {opening}my\\\n \t  clock{closing} -period 10 [get_ports clk]\n",
+        "group-continuation.sdc",
+    ).commands[0]
+
+    assert command.option("-name") == "my clock"
+    assert not command.parse_errors
+
+
 def test_tcl_reports_each_unbalanced_delimiter_without_throwing() -> None:
     _, brace_issues = parse_tcl("set x {unterminated\n", "brace.sdc")
     _, quote_issues = parse_tcl('set x "unterminated\n', "quote.sdc")
@@ -165,9 +193,9 @@ endmodule
     assert resolved.matches == {"data[3]", "data[0]"}
 
 
-def test_sdc_hierarchical_leaf_matching_and_supported_filters(design_factory) -> None:
+def test_sdc_hierarchical_pin_name_matching_and_supported_filters(design_factory) -> None:
     design = design_factory()
-    pin_selector = parse_sdc_text("set_false_path -to [get_pins -hierarchical D]\n").commands[0].selectors[0]
+    pin_selector = parse_sdc_text("set_false_path -to [get_pins -hierarchical u_ff/D]\n").commands[0].selectors[0]
     port_selector = (
         parse_sdc_text("set_input_delay 1 [get_ports -filter {direction == input} *]\n").commands[0].selectors[0]
     )
@@ -618,6 +646,7 @@ def test_sdc_parser_records_selector_argument_roles() -> None:
         ("[get_ports clk]", "-source"),
         ("[get_ports clk]", None),
     ]
+    assert command.opaque_substitutions == ["[get_ports data]"]
 
 
 def test_of_objects_resolves_connectivity_for_cells_pins_nets_and_ports(design_factory) -> None:

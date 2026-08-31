@@ -8,18 +8,18 @@
   "suite_files": [
     {
       "path": "overlays/aes-coverage-reference.sdc",
-      "sha256": "4a4f049f737b639b1dd75113fa9c9416a7434595990e6c5eaa3c1f35fc613ddd",
-      "size_bytes": 403
+      "sha256": "12ceb3f9ea978f2ff0b99ee8539998f05e12c642a7272b11c450691541b091be",
+      "size_bytes": 443
     },
     {
       "path": "overlays/ibex-coverage-reference.sdc",
-      "sha256": "b2a1125267648f4b52d6edd91a21c54776789708bbcd636a7fcbb5731648b3a1",
-      "size_bytes": 649
+      "sha256": "fd5e2be8e9d705cfa2f4db422697377243e04e987e05699cec65908f6c75bc46",
+      "size_bytes": 682
     },
     {
       "path": "overlays/jpeg-coverage-reference.sdc",
-      "sha256": "68c15920661e61e6749421d9aee6db1358ef7c1be44b8b7f225ad9b7d490de15",
-      "size_bytes": 406
+      "sha256": "fb5c103884a6777e5146cd5c4139a63d242bcb384933cdd749d9c2133b7dd302",
+      "size_bytes": 445
     }
   ],
   "datasets": [
@@ -142,7 +142,7 @@
           "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
           "modes": {
             "upstream-static": ["aes-sdc:aes_sky130hd.sdc"],
-            "coverage-reference": ["aes-sdc:aes_sky130hd.sdc", "suite:overlays/aes-coverage-reference.sdc"]
+            "coverage-reference": ["suite:overlays/aes-coverage-reference.sdc"]
           },
           "tags": ["public", "post-synthesis", "openroad", "medium", "sky130hd"]
         },
@@ -154,7 +154,7 @@
           "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
           "modes": {
             "upstream-static": ["ibex-sdc:ibex_sky130hd.sdc"],
-            "coverage-reference": ["ibex-sdc:ibex_sky130hd.sdc", "suite:overlays/ibex-coverage-reference.sdc"]
+            "coverage-reference": ["suite:overlays/ibex-coverage-reference.sdc"]
           },
           "tags": ["public", "post-synthesis", "openroad", "riscv", "medium", "sky130hd"]
         },
@@ -166,7 +166,7 @@
           "liberty": ["sky130hd-liberty:sky130_fd_sc_hd__tt_025C_1v80.lib"],
           "modes": {
             "upstream-static": ["jpeg-sdc:jpeg_sky130hd.sdc"],
-            "coverage-reference": ["jpeg-sdc:jpeg_sky130hd.sdc", "suite:overlays/jpeg-coverage-reference.sdc"]
+            "coverage-reference": ["suite:overlays/jpeg-coverage-reference.sdc"]
           },
           "tags": ["public", "post-synthesis", "openroad", "large", "sky130hd"]
         }

@@ -9,7 +9,7 @@ compatibility caveats documented in [GOVERNANCE.md](GOVERNANCE.md).
 
 _No changes yet._
 
-## [0.3.0-beta] - 2026-08-31
+## [0.3.0-beta] - 2026-09-01
 
 ### Added
 
@@ -19,6 +19,9 @@ _No changes yet._
 - Stable errors `OC2006` for malformed primary-clock identity/targets and
   `OC4002` for malformed exception or clock-group definitions, with dedicated
   rule documentation and reviewed semantic-accuracy cases.
+- Stable error `OC0003` for dynamic command dispatch and every command outside
+  the exact nine-command static allowlist; affected modes now receive zero
+  trusted coverage instead of a clean score.
 - A versioned, occurrence-level accuracy corpus with closed JSON Schemas and a
   CI gate that reports true positives, false positives, false negatives,
   precision, and recall without inflating scores for unlabeled behavior.
@@ -53,13 +56,63 @@ _No changes yet._
 - I/O-delay commands now require exactly one delay and one target collection,
   matching OpenSTA's positional arity and preventing rejected extra targets
   from satisfying missing-delay or coverage obligations.
+- The nine modeled SDC commands now use separate source-pinned option and
+  operand grammars. Foreign or missing options, malformed decoded words, and
+  invalid positional shapes fail closed without mutating modeled state, while
+  nested selectors remain available as diagnostic evidence.
+- Tcl backslash-newline folding now consumes following spaces/tabs in every
+  lexical context and preserves Tcl's odd/even comment-continuation behavior.
+  Selector substitutions in scalar options or effective scalar positionals
+  fail the outer command closed as `OC0003`, while documented collection-valued
+  selector roles remain static;
+  astral eight-digit escapes fail closed across Tcl 8.6 Unicode builds.
 - Object-query parsing now distinguishes an omitted OpenSTA-compatible
   implicit wildcard from an explicitly empty Tcl pattern, rejects malformed
   option/positional arity instead of broadening it, and exempts intentional
   `all_*` collections from broad-wildcard warnings. It also preserves Tcl
-  brace-suppressed substitutions, recognizes modeled option abbreviations,
-  rejects explicitly empty filters, and independently audits evaluated nested
-  queries when an outer query is unsupported.
+  brace-suppressed substitutions, decodes non-evaluating Tcl word escapes in
+  command and selector names plus nested list elements before wildcard/option
+  classification, recognizes singular query aliases and modeled option
+  abbreviations, implements literal `*`/`?` glob matching and anchored
+  common-subset regular expressions, and applies OpenSTA's kind-specific
+  hierarchy scope names and current-scope wildcard depth. Conservative regexp
+  validation rejects backend-specific escapes, quantifiers, bracket classes,
+  and case folding; OpenSTA's component-level regexp/exact-lookup routing and
+  raw-anchor precedence are retained. Multiplicity is retained for singleton
+  contracts even when duplicate patterns collapse to one object. Exact
+  direction filters, literal exception scopes, excessive selector nesting,
+  malformed Tcl lists, and invalid Unicode escapes now fail closed. Sequential
+  truth filtering is limited to the explicit `get_registers` extension.
+- Glob matching now follows pinned OpenSTA UTF-8 byte and adjacent-star
+  semantics with stack-safe dynamic programming and per-comparison/collection
+  work limits. Regular expressions have explicit length, nesting, quantifier,
+  top-level-alternation/repetition, ambiguity, and collection-work limits.
+  Escaped hierarchy dividers and bus-range-shaped patterns fail closed instead
+  of being misresolved by the flattened structural model.
+- Non-ANSI packed port declarations no longer leave aggregate-name ghost ports
+  or nets. Named and positional hierarchical bus connections remain intact;
+  escaped-identifier/hierarchy path collisions now produce a parser warning and
+  therefore design-level `OC0002`.
+- Literal target, reference, exception-scope, and clock-group collections use a
+  bounded Tcl-list decoder and fail the whole modeled command when any member is
+  malformed or unresolved. Singleton literal references count the complete
+  list and preserve their original spelling. This intentionally prevents
+  OpenSTA's warning-based partial-retention behavior from silently narrowing an
+  audited constraint.
+- Primary clocks now reject more than one positional target word, and generated
+  clocks reject either missing or multiple positional target words, matching
+  the source-pinned OpenSTA command arity.
+- Invalid clock definition attempts remain visible with `valid: false`, but are
+  excluded from active clock queries, I/O requirements, exceptions, graphs,
+  coverage, cross-mode comparison, and semantic digests.
+- Numeric operands are Tcl-decoded exactly once. Waveform, edge, and edge-shift
+  values use the bounded Tcl-list decoder instead of comma/whitespace splitting;
+  integer transforms and multicycle values are parsed exactly within the pinned
+  Tcl `string is integer` range instead of round-tripping through binary floats.
+- Exception selectors that cannot resolve remain inactive and are covered by
+  the query diagnostics. Clock groups accept only fully resolved clock collections;
+  `all_clocks` is valid at exception endpoints, and singleton `all_inputs` or
+  `all_outputs` collections satisfy the I/O reference-pin contract.
 - Benchmark manifests and baselines reject duplicate JSON keys, excessive
   size, excessive nesting, and excessive node counts before semantic traversal.
 - Release builds pin the backend, bind wheel timestamps to the release commit,
@@ -79,8 +132,8 @@ _No changes yet._
 
 ### Validation
 
-- The reviewed accuracy corpus contains 65 expected diagnostic occurrences
-  across 34 cases and currently gates at 65 true positives, zero false
+- The reviewed accuracy corpus contains 67 expected diagnostic occurrences
+  across 35 cases and currently gates at 67 true positives, zero false
   positives, and zero false negatives for its explicitly scored rule set.
 - The checksum-pinned OpenROAD AES, Ibex, and JPEG suite covers 78,537
   gate-level instances and 6,842 sequential endpoints; all refreshed semantic

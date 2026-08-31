@@ -1,9 +1,9 @@
 # Competitive position and evidence bar
 
-OpenConstraint is designed to be the strongest **open, reproducible,
-CI-native** SDC quality auditor it can be. That is a narrower and testable goal
-than claiming universal superiority over commercial constraint-signoff suites.
-This page records the evidence boundary as of 2026-08-31.
+OpenConstraint is an **open, reproducible, CI-native** SDC quality auditor.
+Improving those measurable properties is a narrower and testable goal than
+claiming universal superiority over commercial constraint-signoff suites.
+This page records the evidence boundary as of 2026-09-01.
 
 ## What is independently reproducible here
 
@@ -59,8 +59,8 @@ marketing claims:
 - deterministic, diffable machine output and schemas;
 - public accuracy labels, corpus provenance, fuzz harnesses, and regression
   baselines;
-- safe static analysis by default, with Tcl execution isolated behind an
-  explicit trusted-input OpenSTA option;
+- non-executing, fail-closed static analysis by default, with Tcl execution
+  available only through an explicit trusted-input OpenSTA option;
 - ordinary pull-request, SARIF, waiver, and baseline workflows without a
   proprietary database.
 

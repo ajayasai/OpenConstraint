@@ -8,9 +8,9 @@ it never passes SDC to a Tcl interpreter.
 
 This substantially reduces risk compared with evaluating an arbitrary SDC
 program, but it does not make hostile input risk-free. v0.3.0-beta bounds
-pathological Verilog bus expansion, Liberty group nesting, and structural
-hierarchy depth, but it does not impose a general file-size, memory, or runtime
-quota.
+pathological Verilog bus expansion, Liberty group nesting, structural hierarchy
+depth, and supported glob/regular-expression matching, but it does not impose a
+general file-size, memory, or runtime quota.
 
 ## Assets to protect
 
@@ -102,9 +102,33 @@ descendant processes an SDC could create.
 ## Tcl/SDC handling
 
 The lexer understands enough Tcl grouping to identify SDC commands and nested
-object queries. It preserves dynamic syntax as data. A query containing a Tcl
-variable or unsupported nested expression produces `OC1003` or `OC1004`; it is
-not substituted or executed.
+object queries. The static model accepts exactly nine top-level constraint
+commands and applies a distinct grammar to each. Every other command or dynamic
+command name produces `OC0003`; malformed grouping/command grammar produces
+`OC0001`; a query containing a Tcl variable or unsupported nested expression
+produces `OC1003` or `OC1004`. Each of those four errors forces the affected
+mode's trusted coverage to `0.0/F`; none of the syntax is executed.
+Recognized selectors are modeled only in documented collection-valued
+positions. A selector substituted into a scalar option or effective scalar
+positional is retained for query auditing but makes the outer command opaque
+(`OC0003`) so its unevaluated source spelling can never become semantic state.
+
+Static selector decoding is bounded to 64 nested selectors. Generic literal
+Tcl-list decoding is separately bounded to 64 grouping levels and 50,000
+elements. Tcl-list errors, invalid Unicode escapes, and nesting beyond those
+bounds produce fail-closed diagnostics rather than a partial or widened
+collection. This is a semantic integrity control, not a complete memory or CPU
+budget.
+
+Static object matching is also fail-closed and work-bounded. Globs use a
+stack-safe byte-oriented dynamic program capped at 1,000,000 states per
+comparison and 10,000,000 estimated states per collection walk. Regular
+expressions are limited to 4,096 characters, 64 group levels, eight
+quantifiers, one unbounded quantifier and one alternation per path component,
+no repetition in a component with top-level alternation, and 10,000,000
+estimated collection-comparison states. Expressions outside the conservative
+Tcl-ARE/Python shared subset or above those bounds produce `OC1004`; they are
+never silently widened or partially credited.
 
 This guarantee applies to OpenConstraint's built-in static backend. It does not
 make the same SDC safe to load into another Tcl-based EDA tool, including the
@@ -113,16 +137,19 @@ explicit `--opensta` path.
 ## Availability risks
 
 A hostile file can attempt to consume CPU or memory through extreme size,
-identifier count, regular-expression cost, or structure. Targeted parser limits
-cap Tcl retention at 50,000 commands and 1,000 detailed issues; Liberty
-retention at 750,000 tokens, 120,000 nodes, and 1,000 detailed warnings; bus
-expansion at 65,536 bits; expanded names at 131,072 per parsed Verilog file;
-Verilog connections at 65,536 per instance; structural statements at 200,000;
-parsed Verilog modules at 10,000; detailed Verilog warnings at 1,000;
-Liberty/hierarchy depth at 256 levels; and elaborated structural objects at
-262,144. A deterministic summary warning records cardinality truncation, and
-design-level error `OC0002` prevents the resulting partial model from passing
-the default severity gate.
+identifier count, regular-expression cost, or structure. Targeted limits cap
+glob work at 1,000,000 states per comparison and 10,000,000 per collection;
+regular-expression length at 4,096 characters, nesting at 64, quantifiers at
+eight, and estimated collection work at 10,000,000 states; Tcl retention at
+50,000 commands, selector/literal-list nesting at 64 levels, literal lists at
+50,000 elements, and Tcl detail at 1,000 issues; Liberty retention at 750,000
+tokens, 120,000 nodes, and 1,000 detailed warnings; bus expansion at 65,536
+bits; expanded names at 131,072 per parsed Verilog file; Verilog connections at
+65,536 per instance; structural statements at 200,000; parsed Verilog modules
+at 10,000; detailed Verilog warnings at 1,000; Liberty/hierarchy depth at 256
+levels; and elaborated structural objects at 262,144. A deterministic summary
+warning records cardinality truncation, and design-level error `OC0002`
+prevents the resulting partial model from passing the default severity gate.
 These are defense-in-depth controls, not a sandbox or a complete resource
 budget. For untrusted inputs:
 

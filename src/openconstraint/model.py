@@ -465,6 +465,10 @@ class ModeResult:
     diagnostics: list[Diagnostic]
     coverage: Coverage
     graph: dict[str, Any]
+    # Invalid definitions remain in ``clocks`` as review evidence, but only
+    # these names participate in active query, graph, comparison, and coverage
+    # semantics.
+    valid_clocks: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True)
@@ -492,6 +496,7 @@ class AuditResult:
                             "period": clock.period,
                             "waveform": list(clock.waveform) if clock.waveform else None,
                             "waveform_explicit": clock.waveform_explicit,
+                            "valid": clock.name in mode.valid_clocks,
                             "generated": clock.generated,
                             "source_targets": sorted(clock.source_targets),
                             "master_clock": clock.master_clock,

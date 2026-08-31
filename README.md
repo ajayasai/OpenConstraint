@@ -66,7 +66,10 @@ openconstraint audit \
 
 ## What the beta checks
 
-- Malformed Tcl grouping without evaluating the Tcl program.
+- Malformed Tcl grouping or modeled-command grammar without evaluating the Tcl
+  program.
+- A strict nine-command static allowlist; dynamic dispatch and every other
+  top-level command fail closed instead of being treated as inert.
 - Incomplete structural models caused by ignored, inferred, malformed, or
   truncated Verilog/Liberty/elaboration input.
 - Static `get_ports`, `get_pins`, `get_cells`, `get_nets`, `get_clocks`, and
@@ -102,9 +105,10 @@ Empty categories are omitted and the remaining weights are renormalized. This
 score is useful for regression gating, but it does not measure exception
 validity, analog timing accuracy, or functional intent. Read the exact
 [coverage methodology](docs/coverage-methodology.md) before setting a threshold.
-Invalid I/O relationships cover zero slots, and any structural parser or
-elaboration warning forces the aggregate score to 0/F rather than reporting
-precision from an untrusted model.
+Invalid I/O relationships cover zero slots. `OC0001`, `OC0003`, `OC1003`, and
+`OC1004` force the affected mode's trusted aggregate to 0/F; structural parser
+or elaboration warning `OC0002` does the same in every mode. Component counts
+remain visible for debugging rather than being presented as trusted coverage.
 
 ## CI-native output
 
@@ -138,11 +142,12 @@ exceptions, coverage components, and normalized diagnostic evidence are gated
 against a reviewed baseline; timing and traced memory remain observational
 because shared runners are noisy.
 
-The upstream SDC files call an OpenROAD Tcl helper that the safe static backend
-does not execute. Each benchmark therefore records both the raw static result
-and a transparent static-coverage reference. The reference is explicitly not
-claimed to be collection-equivalent sign-off SDC; it makes the parser boundary
-visible instead of mislabeling the upstream constraints as incomplete. See the
+The upstream SDC files call an OpenROAD Tcl helper that the non-executing static backend
+does not execute. Each benchmark therefore records both the fail-closed raw
+static result (`OC0003`, `0/F` trusted coverage) and a self-contained,
+transparent static-coverage reference. The reference is explicitly not claimed
+to be collection-equivalent sign-off SDC; it makes the parser boundary visible
+instead of mislabeling the upstream constraints as incomplete. See the
 [benchmark method](benchmarks/README.md).
 
 Parser robustness has two layers: Hypothesis properties and corpus replay run
@@ -155,18 +160,21 @@ schedule. Crash reproducers are retained as CI artifacts. See the
 
 SDC files are Tcl programs, and evaluating an untrusted SDC file can execute
 arbitrary logic in a full interpreter. By default, OpenConstraint's static
-backend does not evaluate variables, nested commands, `source`, environment
-access, or shell commands. Unsupported dynamic constructs produce diagnostics
-instead.
+backend recognizes only the nine documented constraint commands and does not
+evaluate variables, general nested commands, `source`, environment access, or
+shell commands. Any other top-level command, dynamic command name, or opaque
+argument produces a fail-closed diagnostic instead.
 
 `--opensta` deliberately changes that boundary: it executes the supplied SDC in
 a separately installed `sta`/`opensta` process. Use it only for inputs you trust
 with the runner's permissions. It is never enabled implicitly.
 
-The beta does not impose hard input-size or runtime limits, so hostile files
-should still be processed in an OS sandbox with resource quotas. Read the full
-[security model](docs/security-model.md) and report vulnerabilities privately
-according to [SECURITY.md](SECURITY.md).
+The beta bounds key parser cardinalities, nesting depths, and supported
+glob/regular-expression work, but it does not impose a general file-size,
+memory, CPU, or wall-clock limit. Hostile files should still be processed in an
+OS sandbox with resource quotas. Read the full [security
+model](docs/security-model.md) and report vulnerabilities privately according
+to [SECURITY.md](SECURITY.md).
 
 ## Supported subset and OpenSTA
 
@@ -176,7 +184,7 @@ Review the [compatibility matrix](docs/compatibility.md).
 
 OpenSTA is a separate GPL-3.0-or-later project. v0.3.0-beta can invoke an
 installed executable only when `--opensta` is supplied; it does not link or
-redistribute OpenSTA. Each mode runs in an isolated process with a default
+redistribute OpenSTA. Each mode runs in a separate process with a default
 120-second timeout, and the report records the OpenSTA version and SHA-256 of
 the effective SDC. See [OpenSTA validation](docs/opensta-validation.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).

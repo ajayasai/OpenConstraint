@@ -39,6 +39,7 @@ def test_cli_rules_text_and_json_expose_the_same_stable_catalog(capsys) -> None:
     assert {item["id"] for item in payload} == {
         "OC0001",
         "OC0002",
+        "OC0003",
         "OC1001",
         "OC1002",
         "OC1003",

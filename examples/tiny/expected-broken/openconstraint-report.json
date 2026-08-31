@@ -239,6 +239,27 @@
     },
     {
       "evidence": {
+        "clock": "divided",
+        "problems": [
+          "-source must resolve to exactly one port or pin"
+        ],
+        "source_targets": []
+      },
+      "fingerprint": "51fa1a4fe03941f2a682",
+      "location": {
+        "column": 1,
+        "line": 4,
+        "path": "examples/tiny/broken.sdc"
+      },
+      "message": "Generated clock source or target cardinality is invalid",
+      "mode": "default",
+      "rationale": "A generated clock needs one unambiguous source port/pin and a nonempty target collection.",
+      "rule_id": "OC2012",
+      "severity": "error",
+      "suggestion": "Narrow -source to one port or pin and resolve the generated-clock target collection."
+    },
+    {
+      "evidence": {
         "matched_count": 8,
         "query": "[get_ports *]",
         "sample": [
@@ -383,6 +404,7 @@
             "scan_clk",
             "scan_en"
           ],
+          "valid": true,
           "waveform": null,
           "waveform_explicit": false
         },
@@ -407,6 +429,7 @@
           "targets": [
             "u_ff0/Q"
           ],
+          "valid": false,
           "waveform": null,
           "waveform_explicit": false
         },
@@ -429,6 +452,7 @@
           "period": null,
           "source_targets": [],
           "targets": [],
+          "valid": false,
           "waveform": null,
           "waveform_explicit": false
         }
@@ -706,6 +730,27 @@
         },
         {
           "evidence": {
+            "clock": "divided",
+            "problems": [
+              "-source must resolve to exactly one port or pin"
+            ],
+            "source_targets": []
+          },
+          "fingerprint": "51fa1a4fe03941f2a682",
+          "location": {
+            "column": 1,
+            "line": 4,
+            "path": "examples/tiny/broken.sdc"
+          },
+          "message": "Generated clock source or target cardinality is invalid",
+          "mode": "default",
+          "rationale": "A generated clock needs one unambiguous source port/pin and a nonempty target collection.",
+          "rule_id": "OC2012",
+          "severity": "error",
+          "suggestion": "Narrow -source to one port or pin and resolve the generated-clock target collection."
+        },
+        {
+          "evidence": {
             "matched_count": 8,
             "query": "[get_ports *]",
             "sample": [
@@ -946,11 +991,6 @@
             "target": "object:scan_en"
           },
           {
-            "kind": "defines",
-            "source": "clock:divided",
-            "target": "object:u_ff0/Q"
-          },
-          {
             "kind": "reaches",
             "source": "clock:all_ports",
             "target": "endpoint_clock:u_ff0/CLK"
@@ -1108,21 +1148,6 @@
             "label": "scan_en"
           },
           {
-            "id": "clock:divided",
-            "kind": "generated_clock",
-            "label": "divided"
-          },
-          {
-            "id": "object:u_ff0/Q",
-            "kind": "target",
-            "label": "u_ff0/Q"
-          },
-          {
-            "id": "clock:ghost_clock",
-            "kind": "clock",
-            "label": "ghost_clock"
-          },
-          {
             "id": "endpoint_clock:u_ff0/CLK",
             "kind": "sequential_clock_pin",
             "label": "u_ff0/CLK"
@@ -1203,8 +1228,8 @@
     "coverage": {
       "default": 57.5
     },
-    "diagnostic_count": 15,
-    "errors": 8,
+    "diagnostic_count": 16,
+    "errors": 9,
     "mode_count": 1,
     "notes": 1,
     "warnings": 6

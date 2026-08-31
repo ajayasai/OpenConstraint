@@ -24,13 +24,27 @@ from openconstraint.model import (
     SourceLocation,
     effective_io_delay_semantics,
 )
-from openconstraint.parsers.sdc import ParsedCommand, SdcDocument, Selector, parse_sdc, parse_sdc_text
+from openconstraint.parsers.sdc import (
+    MODELED_SDC_COMMANDS,
+    ParsedCommand,
+    SdcDocument,
+    Selector,
+    parse_sdc,
+    parse_sdc_text,
+)
+from openconstraint.parsers.tcl import TclSyntaxError, split_tcl_list
 from openconstraint.query import ResolvedQuery, has_glob, resolve_selector
 from openconstraint.version import __version__
 
 STRUCTURAL_WARNING_SAMPLE_LIMIT = 50
+_MAX_LITERAL_COLLECTION_RECURSION = 64
 _IODelayAuditRelationshipKey = tuple[str, str, tuple[str, ...], str]
 _IODelayAuditSlotKey = tuple[str, str]
+_TCL_NUMERIC_WHITESPACE = " \t\n\v\f\r"
+_TCL_DECIMAL_FLOAT = re.compile(
+    r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)\Z",
+    re.ASCII,
+)
 
 
 @dataclass(slots=True)
@@ -133,49 +147,107 @@ class _ModeState:
     invalid_clocks: set[str] = field(default_factory=set)
 
 
+def _active_clocks(state: _ModeState) -> dict[str, Clock]:
+    """Return only definitions proven valid by the clock audit."""
+
+    return {name: clock for name, clock in state.clocks.items() if name in state.valid_clocks}
+
+
+def _tcl_integer(value: str) -> int | None:
+    """Parse the finite integer spellings accepted by Tcl 8.6.
+
+    This intentionally performs no Tcl word decoding: the SDC parser has
+    already decoded the command operand exactly once.
+    """
+
+    candidate = value.strip(_TCL_NUMERIC_WHITESPACE)
+    if not candidate:
+        return None
+    sign = 1
+    if candidate[0] in "+-":
+        sign = -1 if candidate[0] == "-" else 1
+        candidate = candidate[1:]
+    if not candidate:
+        return None
+    base = 10
+    digits = candidate
+    if candidate.startswith(("0x", "0X")):
+        base, digits = 16, candidate[2:]
+        valid_digits = "0123456789abcdefABCDEF"
+    elif candidate.startswith(("0b", "0B")):
+        base, digits = 2, candidate[2:]
+        valid_digits = "01"
+    elif candidate.startswith(("0o", "0O")):
+        base, digits = 8, candidate[2:]
+        valid_digits = "01234567"
+    elif len(candidate) > 1 and candidate.startswith("0"):
+        base = 8
+        valid_digits = "01234567"
+    else:
+        valid_digits = "0123456789"
+    if not digits or any(char not in valid_digits for char in digits):
+        return None
+    return sign * int(digits, base)
+
+
 def _number(value: str | None) -> float | None:
     if value is None:
         return None
-    candidate = value.strip().strip('{}"')
+    candidate = value.strip(_TCL_NUMERIC_WHITESPACE)
+    if not candidate:
+        return None
     try:
-        result = float(candidate)
+        integer = _tcl_integer(candidate)
+        if integer is not None:
+            result = float(integer)
+        elif _TCL_DECIMAL_FLOAT.fullmatch(candidate):
+            result = float(candidate)
+        else:
+            return None
         return result if math.isfinite(result) else None
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
 
 
 def _numbers(value: str | None) -> tuple[float, ...] | None:
     if value is None:
         return None
-    candidate = value.strip().strip('{}"')
     try:
-        values = tuple(float(item) for item in re.split(r"[\s,]+", candidate) if item)
-    except ValueError:
+        words = split_tcl_list(value)
+    except TclSyntaxError:
         return None
-    return values if values and all(math.isfinite(item) for item in values) else None
+    values = tuple(_number(item) for item in words)
+    if not values or any(item is None for item in values):
+        return None
+    return tuple(item for item in values if item is not None)
 
 
 def _integer(value: str | None) -> int | None:
-    number = _number(value)
-    return int(number) if number is not None and number.is_integer() else None
+    if value is None:
+        return None
+    integer = _tcl_integer(value)
+    # OpenSTA c821ad1 calls Tcl 8.6 ``string is integer`` rather than the
+    # wider/bignum classes. Mirror its magnitude limit and retain exactness.
+    return integer if integer is not None and abs(integer) <= 0xFFFFFFFF else None
 
 
 def _integers(value: str | None) -> tuple[int, ...] | None:
-    numbers = _numbers(value)
-    if numbers is None or not all(item.is_integer() for item in numbers):
+    if value is None:
         return None
-    return tuple(int(item) for item in numbers)
+    try:
+        words = split_tcl_list(value)
+    except TclSyntaxError:
+        return None
+    integers = tuple(_integer(item) for item in words)
+    if not integers or any(item is None for item in integers):
+        return None
+    return tuple(item for item in integers if item is not None)
 
 
 def _plain(value: str | None) -> str | None:
-    if value is None:
-        return None
-    candidate = value.strip()
-    if len(candidate) >= 2 and (
-        (candidate[0] == "{" and candidate[-1] == "}") or (candidate[0] == '"' and candidate[-1] == '"')
-    ):
-        candidate = candidate[1:-1]
-    return candidate
+    # Command operands were decoded by the SDC parser. A second trim/unquote
+    # changes literal identities such as ``{{core}}`` into ``core``.
+    return value
 
 
 def _finding(
@@ -211,14 +283,24 @@ def _resolve_many(
     return matches, resolutions
 
 
-def _literal_targets(command: ParsedCommand, design: Design, *, allow_nets: bool) -> set[str]:
+def _literal_targets(command: ParsedCommand, design: Design, *, allow_nets: bool) -> tuple[set[str], list[str]]:
     targets: set[str] = set()
+    problems: list[str] = []
     candidates = set(design.ports) | set(design.pins)
     if allow_nets:
         candidates.update(design.nets)
     for value in command.positionals:
-        targets.update(_collection_literals(value, candidates))
-    return targets
+        if any(selector.option is None and selector.raw == value for selector in command.selectors):
+            continue
+        _, literal_targets, unknown, error = _literal_collection(value, candidates)
+        targets.update(literal_targets)
+        if error is not None:
+            problems.append(f"target literal is not a well-formed Tcl object list: {error}")
+        if unknown:
+            sample = ", ".join(repr(item) for item in unknown[:8])
+            suffix = f" (and {len(unknown) - 8} more)" if len(unknown) > 8 else ""
+            problems.append(f"target literal contains unresolved object(s): {sample}{suffix}")
+    return targets, problems
 
 
 def _validated_waveform(state: _ModeState, command: ParsedCommand, period: float | None) -> tuple[float, ...] | None:
@@ -409,6 +491,13 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
             is_generated = command.name == "create_generated_clock"
             if command.name not in {"create_clock", "create_generated_clock"} or is_generated != generated_pass:
                 continue
+            if command.parse_errors or command.opaque_substitutions:
+                # Tcl evaluates nested collection commands before invoking the
+                # outer command. Audit those selectors, but never construct a
+                # clock from a command whose outer argument semantics are not
+                # statically trustworthy.
+                state.queries.extend(resolve_selector(selector, design, state.clocks) for selector in command.selectors)
+                continue
             selectors = _selectors_for(command)
             allowed_target_kinds = {"ports", "pins", "all_inputs", "all_outputs"}
             if is_generated:
@@ -427,7 +516,8 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                     if resolution.selector.kind not in allowed_target_kinds
                 }
             )
-            targets.update(_literal_targets(command, design, allow_nets=is_generated))
+            literal_targets, literal_target_problems = _literal_targets(command, design, allow_nets=is_generated)
+            targets.update(literal_targets)
             target_net_problems: list[str] = []
             if is_generated:
                 converted_targets: set[str] = set()
@@ -449,22 +539,27 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
             target_argument_present = bool(command.positionals)
             definition_invalid = False
             source_targets: set[str] = set()
+            source_match_count = 0
+            source_collection_valid = True
             source_type_valid = True
             if is_generated:
                 source_word = command.option("-source")
-                source_selector = next(
-                    (item for item in reversed(command.selectors) if item.option == "-source"),
-                    None,
-                )
+                source_selector = _option_selector(command, "-source", source_word)
                 if source_selector:
                     source_result = resolve_selector(source_selector, design, state.clocks)
                     state.queries.append(source_result)
                     source_targets.update(source_result.matches)
+                    source_match_count = source_result.match_count
+                    source_collection_valid = source_result.error is None and not source_result.unmatched_patterns
                     source_type_valid = source_selector.kind in {"ports", "pins", "all_inputs", "all_outputs"}
                 elif source_word is not None:
-                    source_targets.update(
-                        _collection_literals(source_word, set(design.ports) | set(design.pins) | set(design.nets))
+                    source_elements, literal_sources, unknown_sources, source_error = _literal_singleton(
+                        source_word,
+                        set(design.ports) | set(design.pins) | set(design.nets),
                     )
+                    source_targets.update(literal_sources)
+                    source_match_count = len(source_elements)
+                    source_collection_valid = source_error is None and not unknown_sources
             name = _plain(command.option("-name"))
             if not name:
                 name = (
@@ -473,7 +568,11 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                     else f"<unnamed@{Path(command.location.path).name}:{command.location.line}>"
                 )
             if not is_generated:
-                problems: list[str] = []
+                problems = list(literal_target_problems)
+                if len(command.positionals) > 1:
+                    problems.append(
+                        f"create_clock accepts at most one positional target collection; got {len(command.positionals)}"
+                    )
                 if command.option("-name") is None and not targets:
                     problems.append("-name or a nonempty port/pin target is required")
                 if command.has("-add") and command.option("-name") is None:
@@ -515,18 +614,22 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                 if not transform_valid:
                     definition_invalid = True
                 generated_problems: list[str] = []
-                if not target_argument_present or not targets:
+                generated_problems.extend(literal_target_problems)
+                if len(command.positionals) != 1:
+                    generated_problems.append(
+                        "create_generated_clock requires exactly one positional target collection; "
+                        f"got {len(command.positionals)}"
+                    )
+                elif not targets:
                     generated_problems.append("one nonempty generated-clock target collection is required")
                 if invalid_target_kinds:
                     generated_problems.append(
                         "generated clock targets must be ports, pins, or nets, not " + ", ".join(invalid_target_kinds)
                     )
                 generated_problems.extend(target_net_problems)
-                if len(source_targets) > 1:
+                if source_match_count != 1 or not source_collection_valid or len(source_targets) != 1:
                     generated_problems.append("-source must resolve to exactly one port or pin")
-                elif len(source_targets) == 1 and (
-                    not source_type_valid or not source_targets.issubset(set(design.ports) | set(design.pins))
-                ):
+                elif not source_type_valid or not source_targets.issubset(set(design.ports) | set(design.pins)):
                     generated_problems.append("-source must resolve to a port or pin, not a net or other object")
                 if generated_problems:
                     transform_valid = False
@@ -541,23 +644,31 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                         "Narrow -source to one port or pin and resolve the generated-clock target collection.",
                         {"clock": name, "source_targets": sorted(source_targets), "problems": generated_problems},
                     )
-                master_selector = next(
-                    (item for item in reversed(command.selectors) if item.option == "-master_clock"),
-                    None,
-                )
+                master_selector = _option_selector(command, "-master_clock", master_word)
                 master_names: set[str] = set()
+                master_match_count = 0
+                master_collection_valid = True
                 master_selector_type_valid = True
                 if master_selector is not None:
                     master_result = resolve_selector(master_selector, design, state.clocks)
                     state.queries.append(master_result)
                     master_selector_type_valid = master_selector.kind in {"clocks", "all_clocks"}
                     master_names.update(name for name in master_result.matches if name in state.clocks)
+                    master_match_count = master_result.match_count
+                    master_collection_valid = master_result.error is None and not master_result.unmatched_patterns
                 elif master_word is not None:
-                    master_names.update(_collection_literals(master_word, set(state.clocks)))
+                    master_elements, literal_masters, unknown_masters, master_error = _literal_singleton(
+                        master_word, set(state.clocks)
+                    )
+                    master_names.update(literal_masters)
+                    master_match_count = len(master_elements)
+                    master_collection_valid = master_error is None and not unknown_masters
                 explicit_master_valid = master_word is None
                 if master_word is not None:
                     if (
                         master_selector_type_valid
+                        and master_collection_valid
+                        and master_match_count == 1
                         and len(master_names) == 1
                         and next(iter(master_names)) not in state.invalid_clocks
                     ):
@@ -665,9 +776,10 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                     clock, include_targets=False
                 )
                 if command.has("-add") and same_definition:
-                    previous.targets.update(clock.targets)
                     if definition_invalid:
                         state.invalid_clocks.add(name)
+                    else:
+                        previous.targets.update(clock.targets)
                     continue
                 state.duplicate_clocks.append((previous, clock))
             state.clocks[name] = clock
@@ -756,7 +868,7 @@ def _audit_queries(state: _ModeState, design: Design, options: AuditOptions) -> 
             _finding(
                 state,
                 "OC1003" if selector.dynamic else "OC1004",
-                Severity.WARNING,
+                Severity.ERROR,
                 f"Object query cannot be resolved statically: {selector.raw}",
                 selector.location,
                 "An unresolved dynamic or unsupported query prevents deterministic coverage analysis.",
@@ -917,6 +1029,7 @@ def _audit_clocks(state: _ModeState, design: Design, options: AuditOptions) -> d
 
 
 def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
+    active_clocks = _active_clocks(state)
     for document in state.documents:
         for issue in document.issues:
             _finding(
@@ -929,16 +1042,75 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                 "Fix the Tcl syntax before trusting any downstream result.",
             )
         for command in document.commands:
+            if command.parse_errors:
+                _finding(
+                    state,
+                    "OC0001",
+                    Severity.ERROR,
+                    f"Malformed {command.name or '<dynamic>'} command grammar",
+                    command.location,
+                    "An invalid option or missing option operand can change which SDC arguments become constraints or targets.",
+                    "Use the pinned OpenSTA command spelling and option arity before trusting downstream results.",
+                    {"command": command.name or "<dynamic>", "problems": command.parse_errors},
+                )
+            unsupported_command = command.name not in MODELED_SDC_COMMANDS
+            command_last_lexed_line = command.location.line + command.raw.count("\n") + 1
+            has_related_syntax_error = any(
+                command.location.line <= issue.location.line <= command_last_lexed_line for issue in document.issues
+            )
+            opaque_without_syntax_error = bool(command.opaque_substitutions) and (not has_related_syntax_error)
+            if command.dynamic_name or unsupported_command or opaque_without_syntax_error:
+                effective_name = "<dynamic>" if command.dynamic_name else command.name
+                evidence: dict[str, object] = {"command": effective_name}
+                if opaque_without_syntax_error:
+                    evidence.update(
+                        {
+                            "opaque_argument_count": len(command.opaque_substitutions),
+                            "opaque_arguments": [word[:160] for word in command.opaque_substitutions[:8]],
+                        }
+                    )
+                _finding(
+                    state,
+                    "OC0003",
+                    Severity.ERROR,
+                    f"Tcl command {effective_name!r} is outside the static command subset",
+                    command.location,
+                    "Unsupported commands or opaque Tcl substitutions can hide constraints and make static coverage incomplete.",
+                    "Flatten trusted constraints to the documented static SDC subset, or validate the original file with the optional sandboxed OpenSTA path.",
+                    evidence,
+                )
             if command.name in {"create_clock", "create_generated_clock"}:
                 continue
-            resolutions = [resolve_selector(selector, design, state.clocks) for selector in command.selectors]
+            resolutions = [resolve_selector(selector, design, active_clocks) for selector in command.selectors]
             state.queries.extend(resolutions)
+            if command.parse_errors or command.opaque_substitutions or unsupported_command:
+                if (
+                    command.opaque_substitutions
+                    and not command.parse_errors
+                    and command.name in {"set_input_delay", "set_output_delay"}
+                ):
+                    # Preserve the established rule-specific explanation for
+                    # dynamic I/O operands, then roll back the modeled record:
+                    # OC0003 makes the command non-authoritative.
+                    io_delay_count = len(state.io_delays)
+                    delayed_inputs = set(state.delayed_inputs)
+                    delayed_outputs = set(state.delayed_outputs)
+                    _collect_io_delay(
+                        state,
+                        command,
+                        design,
+                        "input" if command.name == "set_input_delay" else "output",
+                    )
+                    del state.io_delays[io_delay_count:]
+                    state.delayed_inputs = delayed_inputs
+                    state.delayed_outputs = delayed_outputs
+                continue
             if command.name == "set_input_delay":
                 _collect_io_delay(state, command, design, "input")
             elif command.name == "set_output_delay":
                 _collect_io_delay(state, command, design, "output")
             elif command.name in {"set_false_path", "set_multicycle_path", "set_max_delay", "set_min_delay"}:
-                exception = _exception_from_command(command, design, state.clocks)
+                exception = _exception_from_command(command, design, active_clocks)
                 definition_problems = exception.qualifiers.get("definition_problems", [])
                 if isinstance(definition_problems, list) and definition_problems:
                     _finding(
@@ -951,32 +1123,113 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                         "Provide one resolvable from/through/to scope and all required finite values.",
                         {"command": command.name, "problems": definition_problems},
                     )
-                if command.has("-reset_path"):
-                    _reset_prior_exceptions(state, exception)
-                state.exceptions.append(exception)
                 if command.name == "set_multicycle_path":
                     _collect_multicycle(state, command, exception)
+                if command.has("-reset_path") and exception.qualifiers.get("definition_valid") is True:
+                    _reset_prior_exceptions(state, exception)
+                state.exceptions.append(exception)
             elif command.name == "set_clock_groups":
                 state.exceptions.extend(_clock_group_exceptions(state, command, design))
 
 
-def _collection_literals(value: str | None, candidates: set[str]) -> set[str]:
-    plain = _plain(value)
-    if not plain:
-        return set()
-    return {item for item in re.split(r"\s+", plain) if item in candidates}
+def _literal_collection(
+    value: str | None, candidates: set[str]
+) -> tuple[tuple[str, ...], set[str], tuple[str, ...], str | None]:
+    """Parse a recursively nested literal object collection.
+
+    The SDC parser has already decoded the outer Tcl command word.  The
+    OpenSTA object-list helpers recursively expand elements that are themselves
+    multi-element lists.  Preserve every resulting leaf so unresolved members
+    cannot disappear merely because some siblings resolve.
+
+    Pinned OpenSTA c821ad1 ``tcl/CmdArgs.tcl::get_object_args`` (lines 79-168)
+    and ``get_clocks_warn`` (lines 934-956) warn and retain known siblings for
+    several commands.  OpenConstraint intentionally applies a stricter audit
+    policy: callers keep the resolved members only as evidence and mark the
+    entire modeled definition invalid when ``unknown`` is nonempty.
+    """
+
+    if value is None:
+        return (), set(), (), None
+
+    leaves: list[str] = []
+
+    def flatten(objects: str, depth: int) -> None:
+        if depth > _MAX_LITERAL_COLLECTION_RECURSION:
+            raise TclSyntaxError(
+                f"literal object collection exceeds recursion limit {_MAX_LITERAL_COLLECTION_RECURSION}"
+            )
+        for element in split_tcl_list(objects):
+            nested = split_tcl_list(element)
+            if len(nested) > 1:
+                flatten(element, depth + 1)
+            elif element:
+                leaves.append(element)
+
+    try:
+        flatten(value, 1)
+    except TclSyntaxError as error:
+        return (), set(), (), str(error)
+    elements = tuple(leaves)
+    matches = {item for item in leaves if item in candidates}
+    unknown = tuple(item for item in leaves if item not in candidates)
+    return elements, matches, unknown, None
+
+
+def _literal_singleton(
+    value: str | None, candidates: set[str]
+) -> tuple[tuple[str, ...], set[str], tuple[str, ...], str | None]:
+    """Validate a singular Tcl object argument without candidate-biased count.
+
+    OpenSTA's singular helpers use ``llength`` only for cardinality, then look
+    up the original argument value.  In particular, an extra nested brace or
+    quote layer is part of the object name rather than another expansion step.
+    """
+
+    if value is None:
+        return (), set(), (), None
+    try:
+        elements = split_tcl_list(value)
+    except TclSyntaxError as error:
+        return (), set(), (), str(error)
+    matches = {value} if len(elements) == 1 and value in candidates else set()
+    unknown = (value,) if len(elements) == 1 and value not in candidates else ()
+    return elements, matches, unknown, None
+
+
+def _option_selector(command: ParsedCommand, option: str, value: str | None) -> Selector | None:
+    """Return the selector belonging to the effective (last) option value."""
+
+    if value is None:
+        return None
+    return next(
+        (selector for selector in reversed(command.selectors) if selector.option == option and selector.raw == value),
+        None,
+    )
 
 
 def _clock_references(command: ParsedCommand, design: Design, clocks: dict[str, Clock]) -> tuple[set[str], bool]:
     clock_word = command.option("-clock")
     if clock_word is None:
         return set(), True
-    selectors = [selector for selector in command.selectors if selector.option == "-clock"]
-    resolved, _ = _resolve_many(selectors, design, clocks)
-    names = {name for name in resolved if name in clocks}
-    names.update(_collection_literals(clock_word, set(clocks)))
-    dynamic = "$" in clock_word or (clock_word.lstrip().startswith("[") and not selectors)
-    return names, len(names) == 1 and not dynamic
+    selector = _option_selector(command, "-clock", clock_word)
+    if selector is not None:
+        resolution = resolve_selector(selector, design, clocks)
+        names = {name for name in resolution.matches if name in clocks}
+        valid = (
+            selector.kind in {"clocks", "all_clocks"}
+            and resolution.error is None
+            and not resolution.unmatched_patterns
+            and resolution.match_count == 1
+            and len(names) == 1
+            and not selector.dynamic
+        )
+        return names, valid
+
+    elements, names, unknown, error = _literal_singleton(clock_word, set(clocks))
+    dynamic = "$" in clock_word or clock_word.lstrip().startswith("[")
+    valid = error is None and not unknown and len(elements) == 1 and len(names) == 1 and not dynamic
+    return names, valid
 
 
 def _reference_pin(
@@ -988,23 +1241,28 @@ def _reference_pin(
     if raw is None:
         return None, True, set()
     candidates = set(design.ports) | set(design.pins)
-    selectors = [selector for selector in command.selectors if selector.option == "-reference_pin"]
-    supported_selectors = [selector for selector in selectors if selector.kind in {"ports", "pins"}]
-    matches, _ = _resolve_many(supported_selectors, design, clocks)
-    matches.intersection_update(candidates)
-    if not selectors and not raw.lstrip().startswith("["):
-        matches.update(_collection_literals(raw, candidates))
-    dynamic = (
-        "$" in raw
-        or any(selector.dynamic for selector in selectors)
-        or (raw.lstrip().startswith("[") and not selectors)
-    )
-    valid = len(matches) == 1 and len(supported_selectors) == len(selectors) and not dynamic
+    selector = _option_selector(command, "-reference_pin", raw)
+    if selector is not None:
+        resolution = resolve_selector(selector, design, clocks)
+        matches = resolution.matches & candidates
+        valid = (
+            selector.kind in {"ports", "pins", "all_inputs", "all_outputs"}
+            and resolution.error is None
+            and not resolution.unmatched_patterns
+            and resolution.match_count == 1
+            and len(matches) == 1
+            and not selector.dynamic
+        )
+    else:
+        elements, matches, unknown, error = _literal_singleton(raw, candidates)
+        dynamic = "$" in raw or raw.lstrip().startswith("[")
+        valid = error is None and not unknown and len(elements) == 1 and len(matches) == 1 and not dynamic
     reference_pin = next(iter(matches)) if valid else None
     return reference_pin, valid, matches
 
 
 def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design, kind: str) -> None:
+    active_clocks = _active_clocks(state)
     delay_word = command.positionals[0] if command.positionals else None
     delay = _number(delay_word)
     target_words = command.positionals[1:]
@@ -1015,9 +1273,24 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
         and selector.raw in target_words
         and selector.kind in {"ports", "all_inputs", "all_outputs"}
     ]
-    ports, _ = _resolve_many(target_selectors, design, state.clocks)
+    ports, _ = _resolve_many(target_selectors, design, active_clocks)
+    target_collection_valid = True
+    target_collection_unknown: list[str] = []
+    target_collection_errors: list[str] = []
     for word in target_words:
-        ports.update(_collection_literals(word, set(design.ports)))
+        if any(selector.option is None and selector.raw == word for selector in command.selectors):
+            continue
+        elements, literal_ports, unknown, error = _literal_collection(word, set(design.ports))
+        ports.update(literal_ports)
+        if error is not None:
+            target_collection_valid = False
+            target_collection_errors.append(error)
+        if not elements:
+            target_collection_valid = False
+            target_collection_errors.append("target collection is empty")
+        if unknown:
+            target_collection_valid = False
+            target_collection_unknown.extend(unknown)
     ports.intersection_update(design.ports)
 
     shape_valid = len(command.positionals) == 2
@@ -1057,8 +1330,24 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
             remediation,
             evidence,
         )
+    if shape_valid and delay is not None and not target_collection_valid:
+        _finding(
+            state,
+            "OC3010",
+            Severity.ERROR,
+            f"{command.name} has an unresolved or malformed literal target collection",
+            command.location,
+            "OpenSTA rejects the entire I/O-delay command when any literal target-list member is not a design port.",
+            "Use one well-formed Tcl list containing only existing design ports.",
+            {
+                "command": command.name,
+                "target": target_words[0] if target_words else None,
+                "unknown_members": target_collection_unknown,
+                "list_errors": target_collection_errors,
+            },
+        )
 
-    clocks, clock_valid = _clock_references(command, design, state.clocks)
+    clocks, clock_valid = _clock_references(command, design, active_clocks)
     if clocks and not clocks.issubset(state.valid_clocks):
         clock_valid = False
     if command.option("-clock") is None:
@@ -1084,7 +1373,7 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
             {"command": command.name, "clock": command.option("-clock"), "ports": sorted(ports)},
         )
 
-    reference_pin, reference_valid, reference_matches = _reference_pin(command, design, state.clocks)
+    reference_pin, reference_valid, reference_matches = _reference_pin(command, design, active_clocks)
     reference_word = command.option("-reference_pin")
     if reference_word is not None and not reference_valid:
         _finding(
@@ -1145,7 +1434,7 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
     same_clock_ports = {
         port
         for port in valid_ports
-        if clock_valid and any(port in state.clocks[clock_name].targets for clock_name in clocks)
+        if clock_valid and any(port in active_clocks[clock_name].targets for clock_name in clocks)
     }
     if same_clock_ports:
         _finding(
@@ -1181,12 +1470,19 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
         transitions=transitions,
         clock_edge="fall" if command.has("-clock_fall") else "rise",
         additive=command.has("-add_delay"),
-        valid=shape_valid and delay is not None and clock_valid and reference_valid and bool(valid_ports),
+        valid=(
+            shape_valid
+            and delay is not None
+            and target_collection_valid
+            and clock_valid
+            and reference_valid
+            and bool(valid_ports)
+        ),
         location=command.location,
         raw=command.raw,
     )
     state.io_delays.append(item)
-    if shape_valid and delay is not None and clock_valid and reference_valid:
+    if shape_valid and delay is not None and target_collection_valid and clock_valid and reference_valid:
         if kind == "input":
             state.delayed_inputs.update(valid_ports)
         else:
@@ -1323,8 +1619,7 @@ def _audit_io_delays(state: _ModeState) -> None:
 
 def _collect_multicycle(state: _ModeState, command: ParsedCommand, exception: ExceptionPath) -> None:
     multiplier_word = command.positionals[0] if command.positionals else None
-    multiplier_number = _number(multiplier_word)
-    multiplier = int(multiplier_number) if multiplier_number is not None and multiplier_number.is_integer() else None
+    multiplier = _integer(multiplier_word)
     if command.has("-setup") and not command.has("-hold"):
         applies_to = frozenset({"setup"})
     elif command.has("-hold") and not command.has("-setup"):
@@ -1333,7 +1628,9 @@ def _collect_multicycle(state: _ModeState, command: ParsedCommand, exception: Ex
         applies_to = frozenset({"setup", "hold"})
     start_end = "start" if command.has("-start") else "end" if command.has("-end") else "default"
     invalid_reason: str | None = None
-    if multiplier is None:
+    if len(command.positionals) != 1:
+        invalid_reason = f"exactly one positional path multiplier is required; got {len(command.positionals)}"
+    elif multiplier is None:
         invalid_reason = "missing or non-integer path multiplier"
     elif "setup" in applies_to and multiplier < 1:
         invalid_reason = "setup multiplier must be at least 1"
@@ -1350,8 +1647,28 @@ def _collect_multicycle(state: _ModeState, command: ParsedCommand, exception: Ex
             command.location,
             "Invalid multiplier or edge-reference semantics can shift setup/hold checks unpredictably.",
             "Use an integer multiplier and one consistent -start/-end relationship.",
-            {"multiplier": multiplier_word, "applies_to": sorted(applies_to), "start_end": start_end},
+            {
+                "multiplier": multiplier_word,
+                "positionals": command.positionals,
+                "applies_to": sorted(applies_to),
+                "start_end": start_end,
+            },
         )
+    exception.qualifiers.update(
+        {
+            "multiplier": None if invalid_reason is not None else multiplier,
+            "applies_to": sorted(applies_to),
+            "start_end": start_end,
+            "reset_path": command.has("-reset_path"),
+        }
+    )
+    if invalid_reason is not None:
+        problems = exception.qualifiers.get("definition_problems")
+        if isinstance(problems, list) and invalid_reason not in problems:
+            problems.append(invalid_reason)
+        exception.qualifiers["definition_valid"] = False
+        exception.qualifiers["scope_resolvable"] = False
+        return
     item = _Multicycle(
         multiplier=multiplier,
         applies_to=applies_to,
@@ -1368,14 +1685,6 @@ def _collect_multicycle(state: _ModeState, command: ParsedCommand, exception: Ex
         raw=command.raw,
     )
     state.multicycles.append(item)
-    exception.qualifiers.update(
-        {
-            "multiplier": multiplier,
-            "applies_to": sorted(applies_to),
-            "start_end": start_end,
-            "reset_path": command.has("-reset_path"),
-        }
-    )
 
 
 def _objects_from_word(
@@ -1385,7 +1694,7 @@ def _objects_from_word(
     clocks: dict[str, Clock],
     *,
     allowed_selector_kinds: frozenset[str],
-) -> tuple[set[str], set[str]]:
+) -> tuple[set[str], set[str], list[str]]:
     selectors = [selector for selector in command.selectors if selector.raw == value]
     valid_selectors = [selector for selector in selectors if selector.kind in allowed_selector_kinds]
     invalid_kinds = {selector.kind for selector in selectors if selector.kind not in allowed_selector_kinds}
@@ -1397,12 +1706,21 @@ def _objects_from_word(
         candidates.update(design.pins)
     if "cells" in allowed_selector_kinds:
         candidates.update(design.instances)
-    if "clocks" in allowed_selector_kinds:
+    if allowed_selector_kinds & {"clocks", "all_clocks"}:
         candidates.update(clocks)
     if "nets" in allowed_selector_kinds:
         candidates.update(design.nets)
-    values_resolved.update(_collection_literals(value, candidates))
-    return values_resolved, invalid_kinds
+    literal_problems: list[str] = []
+    if not selectors:
+        _, literal_matches, unknown, error = _literal_collection(value, candidates)
+        values_resolved.update(literal_matches)
+        if error is not None:
+            literal_problems.append(f"literal collection is not a well-formed Tcl object list: {error}")
+        if unknown:
+            sample = ", ".join(repr(item) for item in unknown[:8])
+            suffix = f" (and {len(unknown) - 8} more)" if len(unknown) > 8 else ""
+            literal_problems.append(f"literal collection contains unresolved object(s): {sample}{suffix}")
+    return values_resolved, invalid_kinds, literal_problems
 
 
 def _selected_exception_option(command: ParsedCommand, options: tuple[str, ...]) -> tuple[str, str] | None:
@@ -1438,9 +1756,11 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
     to_options = ("-to", "-rise_to", "-fall_to")
     from_entry = _selected_exception_option(command, from_options)
     to_entry = _selected_exception_option(command, to_options)
-    endpoint_kinds = frozenset({"clocks", "cells", "registers", "ports", "pins", "all_inputs", "all_outputs"})
+    endpoint_kinds = frozenset(
+        {"clocks", "all_clocks", "cells", "registers", "ports", "pins", "all_inputs", "all_outputs"}
+    )
     through_kinds = frozenset({"cells", "registers", "ports", "pins", "nets", "all_inputs", "all_outputs"})
-    from_objects, invalid_from_kinds = (
+    from_objects, invalid_from_kinds, from_literal_problems = (
         _objects_from_word(
             command,
             from_entry[1],
@@ -1449,9 +1769,9 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
             allowed_selector_kinds=endpoint_kinds,
         )
         if from_entry is not None
-        else (set(), set())
+        else (set(), set(), [])
     )
-    to_objects, invalid_to_kinds = (
+    to_objects, invalid_to_kinds, to_literal_problems = (
         _objects_from_word(
             command,
             to_entry[1],
@@ -1460,7 +1780,7 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
             allowed_selector_kinds=endpoint_kinds,
         )
         if to_entry is not None
-        else (set(), set())
+        else (set(), set(), [])
     )
     through_options = {"-through", "-rise_through", "-fall_through"}
     through_entries = [(option, value) for option, value in command.option_occurrences if option in through_options]
@@ -1474,8 +1794,9 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
         )
         for _, value in through_entries
     ]
-    through_groups = tuple(frozenset(objects) for objects, _ in resolved_through)
-    invalid_through_kinds = set().union(*(kinds for _, kinds in resolved_through)) if resolved_through else set()
+    through_groups = tuple(frozenset(objects) for objects, _, _ in resolved_through)
+    invalid_through_kinds = set().union(*(kinds for _, kinds, _ in resolved_through)) if resolved_through else set()
+    through_literal_problems = [problems for _, _, problems in resolved_through]
     from_transition = _option_transition(from_entry[0] if from_entry else None, "-rise_from", "-fall_from")
     to_transition = _option_transition(to_entry[0] if to_entry else None, "-rise_to", "-fall_to")
     from_specified = from_entry is not None
@@ -1501,6 +1822,22 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
             "through-scope selectors must return cells, ports, pins, or nets, not "
             + ", ".join(sorted(invalid_through_kinds))
         )
+    definition_problems.extend(f"from scope {problem}" for problem in from_literal_problems)
+    definition_problems.extend(f"to scope {problem}" for problem in to_literal_problems)
+    for index, problems in enumerate(through_literal_problems, start=1):
+        definition_problems.extend(f"through scope {index} {problem}" for problem in problems)
+    from_has_selector = bool(
+        from_entry is not None and any(selector.raw == from_entry[1] for selector in command.selectors)
+    )
+    to_has_selector = bool(to_entry is not None and any(selector.raw == to_entry[1] for selector in command.selectors))
+    if from_specified and not from_objects and not from_has_selector:
+        definition_problems.append("the specified from scope resolves to no objects")
+    if to_specified and not to_objects and not to_has_selector:
+        definition_problems.append("the specified to scope resolves to no objects")
+    for index, (group, (_, word)) in enumerate(zip(through_groups, through_entries, strict=True), start=1):
+        has_selector = any(selector.raw == word for selector in command.selectors)
+        if not group and not has_selector:
+            definition_problems.append(f"specified through scope {index} resolves to no objects")
     has_implicit_end_scope = command.has("-rise") or command.has("-fall")
     if not from_specified and not to_specified and not through_entries and not has_implicit_end_scope:
         definition_problems.append("at least one -from, -through, or -to scope is required")
@@ -1508,6 +1845,10 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
         len(command.positionals) != 1 or _number(command.positionals[0]) is None
     ):
         definition_problems.append("exactly one finite delay value is required")
+    if command.name == "set_multicycle_path" and len(command.positionals) != 1:
+        definition_problems.append(
+            f"exactly one positional path multiplier is required; got {len(command.positionals)}"
+        )
     definition_valid = not definition_problems
     scope_resolvable = (
         definition_valid
@@ -1593,17 +1934,47 @@ def _reset_prior_exceptions(state: _ModeState, reset: ExceptionPath) -> None:
 
 
 def _clock_group_exceptions(state: _ModeState, command: ParsedCommand, design: Design) -> list[ExceptionPath]:
+    active_clocks = _active_clocks(state)
     groups: list[set[str]] = []
+    group_problems: list[list[str]] = []
     for group_word in command.options.get("-group", []):
-        selectors = [selector for selector in command.selectors if selector.raw == group_word]
-        matches, _ = _resolve_many(selectors, design, state.clocks)
-        matches.update(_collection_literals(group_word, set(state.clocks)))
+        selectors = [
+            selector for selector in command.selectors if selector.option == "-group" and selector.raw == group_word
+        ]
+        allowed_selector_kinds = {"clocks", "all_clocks"}
+        valid_selectors = [selector for selector in selectors if selector.kind in allowed_selector_kinds]
+        invalid_selector_kinds = sorted(
+            {selector.kind for selector in selectors if selector.kind not in allowed_selector_kinds}
+        )
+        matches, resolutions = _resolve_many(valid_selectors, design, active_clocks)
+        problems_for_group: list[str] = []
+        if invalid_selector_kinds:
+            problems_for_group.append("selectors must return clocks, not " + ", ".join(invalid_selector_kinds))
+        for resolution in resolutions:
+            if resolution.error is not None:
+                problems_for_group.append("selector cannot be resolved statically")
+            if resolution.unmatched_patterns:
+                problems_for_group.append(
+                    f"selector contains {len(resolution.unmatched_patterns)} unmatched clock pattern(s)"
+                )
+        if not selectors:
+            _, literal_matches, unknown, error = _literal_collection(group_word, set(active_clocks))
+            matches.update(literal_matches)
+            if error is not None:
+                problems_for_group.append(f"literal is not a well-formed Tcl clock list: {error}")
+            if unknown:
+                sample = ", ".join(repr(item) for item in unknown[:8])
+                suffix = f" (and {len(unknown) - 8} more)" if len(unknown) > 8 else ""
+                problems_for_group.append(f"literal contains unresolved clock(s): {sample}{suffix}")
         groups.append(matches)
+        group_problems.append(problems_for_group)
     exceptions: list[ExceptionPath] = []
     relation_options = [
         name for name in ("-asynchronous", "-logically_exclusive", "-physically_exclusive") if command.has(name)
     ]
     problems: list[str] = []
+    for index, problems_for_group in enumerate(group_problems, start=1):
+        problems.extend(f"group {index} {problem}" for problem in problems_for_group)
     if len(relation_options) != 1:
         problems.append("exactly one clock-group relationship is required")
     if command.has("-exclusive"):
@@ -1850,7 +2221,7 @@ def _audit_multicycles(state: _ModeState) -> None:
 
 def _required_io(design: Design, state: _ModeState) -> tuple[set[str], set[str]]:
     clock_ports: set[str] = set()
-    for clock in state.clocks.values():
+    for clock in _active_clocks(state).values():
         for target in clock.targets:
             if target not in design.ports:
                 continue
@@ -2008,7 +2379,9 @@ def _audit_coverage(state: _ModeState, design: Design, pin_to_clocks: dict[str, 
         if denominator
         else 100.0
     )
-    if design.warnings:
+    if design.warnings or any(
+        finding.rule_id in {"OC0001", "OC0003", "OC1003", "OC1004"} for finding in state.diagnostics
+    ):
         return Coverage(0.0, "F", components)
     rounded = round(score, 2)
     grade = "A" if rounded >= 95 else "B" if rounded >= 85 else "C" if rounded >= 70 else "D" if rounded >= 50 else "F"
@@ -2018,7 +2391,7 @@ def _audit_coverage(state: _ModeState, design: Design, pin_to_clocks: dict[str, 
 def _make_graph(state: _ModeState, design: Design, pin_to_clocks: dict[str, set[str]]) -> dict[str, object]:
     nodes: list[dict[str, object]] = []
     edges: list[dict[str, object]] = []
-    for clock in sorted(state.clocks.values(), key=lambda item: item.name):
+    for clock in sorted(_active_clocks(state).values(), key=lambda item: item.name):
         nodes.append(
             {
                 "id": f"clock:{clock.name}",
@@ -2049,7 +2422,8 @@ def _make_graph(state: _ModeState, design: Design, pin_to_clocks: dict[str, set[
         nodes.append({"id": pin_id, "label": pin, "kind": "sequential_clock_pin"})
         for clock_name in sorted(clocks):
             edges.append({"source": f"clock:{clock_name}", "target": pin_id, "kind": "reaches"})
-    for index, exception in enumerate(state.exceptions):
+    graph_exceptions = [item for item in state.exceptions if _exception_scope_resolvable(item)]
+    for index, exception in enumerate(graph_exceptions):
         exception_id = f"exception:{index}"
         nodes.append({"id": exception_id, "label": exception.kind.replace("_", " "), "kind": "exception"})
         for source in sorted(exception.from_objects):
@@ -2104,6 +2478,7 @@ def _audit_documents(name: str, documents: list[SdcDocument], design: Design, op
         state.diagnostics,
         coverage,
         _make_graph(state, design, pin_to_clocks),
+        frozenset(state.valid_clocks),
     )
 
 
@@ -2152,7 +2527,7 @@ def _cross_mode_diagnostics(modes: list[ModeResult]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     if len(modes) < 2:
         return diagnostics
-    all_clock_names = sorted(set().union(*(set(mode.clocks) for mode in modes)))
+    all_clock_names = sorted(set().union(*(set(mode.valid_clocks) for mode in modes)))
     for clock_name in all_clock_names:
         clock_signatures = {
             mode.name: (
@@ -2172,12 +2547,14 @@ def _cross_mode_diagnostics(modes: list[ModeResult]) -> list[Diagnostic]:
                 mode.clocks[clock_name].edge_shift,
             )
             for mode in modes
-            if clock_name in mode.clocks
+            if clock_name in mode.valid_clocks
         }
         if len(clock_signatures) != len(modes) or len(set(clock_signatures.values())) > 1:
-            first_clock = next(mode.clocks[clock_name] for mode in modes if clock_name in mode.clocks)
+            first_clock = next(mode.clocks[clock_name] for mode in modes if clock_name in mode.valid_clocks)
             definitions = {
-                mode.name: _clock_definition(mode.clocks[clock_name]) for mode in modes if clock_name in mode.clocks
+                mode.name: _clock_definition(mode.clocks[clock_name])
+                for mode in modes
+                if clock_name in mode.valid_clocks
             }
             diagnostics.append(
                 Diagnostic(
@@ -2191,7 +2568,7 @@ def _cross_mode_diagnostics(modes: list[ModeResult]) -> list[Diagnostic]:
                     {
                         "clock": clock_name,
                         "definitions": definitions,
-                        "missing_modes": [mode.name for mode in modes if clock_name not in mode.clocks],
+                        "missing_modes": [mode.name for mode in modes if clock_name not in mode.valid_clocks],
                     },
                 )
             )
@@ -2205,6 +2582,7 @@ def _cross_mode_diagnostics(modes: list[ModeResult]) -> list[Diagnostic]:
                 json.dumps(item.qualifiers, sort_keys=True, separators=(",", ":")),
             )
             for item in mode.exceptions
+            if _exception_scope_resolvable(item)
         }
         for mode in modes
     }

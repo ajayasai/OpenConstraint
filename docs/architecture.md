@@ -38,7 +38,10 @@ An explicit optional branch runs after the static audit:
 
 The Tcl lexer separates commands and words while tracking braces, quotes,
 brackets, comments, continuations, and source locations. It does not evaluate
-the tokens. The SDC layer recognizes supported command and object-query shapes.
+the tokens. The SDC layer has an exact nine-command allowlist, a distinct
+option/operand grammar for each modeled command, and command-specific object
+query grammars. Every other top-level command fails closed as `OC0003` rather
+than being assumed inert.
 
 The Liberty reader extracts leaf-cell pin direction, sequential groups, data
 pins, clock pins, and declared combinational dependencies from output
@@ -53,9 +56,14 @@ Each named mode is analyzed independently:
 
 1. Read its SDC documents in the supplied order.
 2. Build primary and generated clock records, including waveform and transform
-   validation.
+   validation. Retain invalid attempts as report evidence while exposing only
+   proven-valid clocks to downstream semantic state.
 3. Resolve supported object queries, including static `-of_objects`
-   connectivity, against the design index.
+   connectivity, work-bounded OpenSTA-compatible byte globs, complexity-bounded
+   anchored common-subset regular expressions, current-scope/hierarchy naming,
+   component-level regexp routing, and collection multiplicity, against the
+   design index. Decode literal object lists separately and invalidate the
+   dependent command if any leaf is malformed or unresolved.
 4. Propagate clocks only through declared Liberty input/output dependencies;
    stop and invalidate incomplete structural models rather than assuming
    all-input-to-all-output connectivity.

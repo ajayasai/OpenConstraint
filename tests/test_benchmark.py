@@ -577,6 +577,7 @@ def test_fetch_and_run_emit_machine_readable_metrics(tmp_path: Path) -> None:
             "period": 10.0,
             "waveform": [0.0, 5.0],
             "waveform_explicit": True,
+            "valid": True,
             "generated": False,
             "source_targets": [],
             "master_clock": None,

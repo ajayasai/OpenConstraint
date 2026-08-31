@@ -3,7 +3,7 @@
 OpenConstraint has two complementary parser-fuzzing layers:
 
 - `tests/test_parser_properties.py` uses Hypothesis in the ordinary cross-platform test suite. It checks arbitrary Unicode text up to 4,096 characters and generates valid Tcl/SDC, Verilog, and Liberty structures with semantic assertions.
-- The launchers in this directory use Atheris/libFuzzer for coverage-guided, long-running arbitrary-byte mutation. Their seed corpora contain valid, nested, escaped, and deliberately malformed examples. The same pure harnesses are replayed by `tests/test_fuzz_seed_corpus.py` on every test run.
+- The launchers in this directory use Atheris/libFuzzer for coverage-guided, long-running arbitrary-byte mutation. Their seed corpora contain valid, nested, escaped, and deliberately malformed examples. Tcl/SDC seeds drive parsing of the strict command allowlist, per-command grammars, aliases, pattern dialects, hierarchy scopes, singleton forms, literal exception scopes, comment/word continuations, scalar selector substitutions, and fail-closed list/Unicode/nesting boundaries. The pure fuzz harness stops at deterministic parsing; query-resolution semantics and work limits are covered by focused unit and OpenSTA-pinned tests. The same pure harnesses are replayed by `tests/test_fuzz_seed_corpus.py` on every test run.
 - Parser-token dictionaries keep mutations reaching meaningful grammar branches instead of spending most runs on immediately rejected noise.
 
 Each native target accepts at most 1 MiB per input. The parsers also impose the

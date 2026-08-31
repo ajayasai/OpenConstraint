@@ -25,9 +25,11 @@ Every diagnostic includes rule ID, severity, message, location, rationale,
 suggestion, mode, fingerprint, and rule-specific evidence. Export the bundled
 JSON Schema with `openconstraint schema`.
 
-Clock records include explicit-waveform state and normalized generated-clock
-source/master, divide/multiply/duty, invert/combinational, edge, and edge-shift
-fields. Exception records retain ordered through collections and a strict
+Clock records include a `valid` boolean, explicit-waveform state, and normalized
+generated-clock source/master, divide/multiply/duty, invert/combinational,
+edge, and edge-shift fields. Invalid definition attempts remain reviewable in
+the report with `valid: false`, but do not participate in active query, graph,
+coverage, comparison, or semantic-digest state. Exception records retain ordered through collections and a strict
 qualifier object for transitions, setup/hold or start/end applicability,
 multiplier/delay values, explicit-side/scope-resolution state, multicycle reset
 markers, and clock-group relation where relevant.

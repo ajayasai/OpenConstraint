@@ -11,6 +11,7 @@ from .conftest import COMPLETE_SDC
 EXPECTED_RULES = {
     "OC0001",
     "OC0002",
+    "OC0003",
     "OC1001",
     "OC1002",
     "OC1003",
@@ -66,6 +67,52 @@ def test_oc0001_malformed_sdc_is_reported_with_source_location(audit_factory) ->
     assert finding.location.line == 2
     assert finding.location.path.endswith(".sdc")
     assert "unterminated command substitution" in finding.message
+    assert result.modes[0].coverage.score == 0.0
+    assert result.modes[0].coverage.grade == "F"
+
+
+@pytest.mark.parametrize("command_name", ["if", "foreach", "proc", "source", "eval"])
+def test_oc0003_unevaluated_tcl_control_fails_closed(audit_factory, command_name: str) -> None:
+    bodies = {
+        "if": "if {1} { set_false_path -from [get_ports missing] -to [get_ports result] }",
+        "foreach": "foreach item {missing} { set_false_path -from [get_ports $item] -to [get_ports result] }",
+        "proc": "proc apply_constraints {} { set_false_path -from [get_ports missing] -to [get_ports result] }",
+        "source": "source generated-constraints.sdc",
+        "eval": "eval {set_false_path -from [get_ports missing] -to [get_ports result]}",
+    }
+    result = audit_factory(COMPLETE_SDC + "\n" + bodies[command_name])
+    finding = _find(result, "OC0003")[0]
+
+    assert finding.severity == Severity.ERROR
+    assert finding.evidence == {"command": command_name}
+    assert result.modes[0].coverage.score == 0.0
+    assert result.modes[0].coverage.grade == "F"
+
+
+def test_oc0003_dynamic_command_dispatch_fails_closed(audit_factory) -> None:
+    result = audit_factory(COMPLETE_SDC + "\n$constraint_command -from [get_ports missing]")
+    finding = _find(result, "OC0003")[0]
+
+    assert finding.evidence == {"command": "<dynamic>"}
+    assert result.modes[0].coverage.score == 0.0
+    assert result.modes[0].coverage.grade == "F"
+
+
+def test_oc0003_tcl_argument_expansion_command_dispatch_fails_closed(audit_factory) -> None:
+    result = audit_factory(COMPLETE_SDC + "\n{*}if {1} {set_false_path -to [all_outputs]}")
+    finding = _find(result, "OC0003")[0]
+
+    assert finding.evidence == {"command": "<dynamic>"}
+    assert result.modes[0].coverage.score == 0.0
+
+
+def test_backslash_substitution_canonicalizes_top_level_sdc_command(audit_factory) -> None:
+    result = audit_factory(COMPLETE_SDC + "\n" + r"\set_false_path -from [get_ports missing] -to [get_ports result]")
+
+    assert any(
+        finding.rule_id == "OC1001" and finding.evidence["query"] == "[get_ports missing]"
+        for finding in result.diagnostics
+    )
 
 
 def test_oc1001_zero_query_has_kind_and_universe_evidence(audit_factory) -> None:
@@ -142,8 +189,10 @@ def test_oc1003_and_oc1004_distinguish_dynamic_from_unsupported_queries(
     result = audit_factory(f"set_input_delay 1 {selector}")
     finding = _find(result, expected_id)[0]
 
-    assert finding.severity == Severity.WARNING
+    assert finding.severity == Severity.ERROR
     assert reason_fragment in finding.evidence["reason"]
+    assert result.modes[0].coverage.score == 0.0
+    assert result.modes[0].coverage.grade == "F"
 
 
 def test_all_registers_selects_sequential_instances_without_false_zero_query(audit_factory) -> None:
@@ -180,6 +229,24 @@ def test_oc2002_records_valid_implicit_waveform_and_can_be_suppressed(audit_fact
     assert finding.severity == Severity.NOTE
     assert finding.evidence["implicit_waveform"] == [0.0, 5.0]
     assert not _find(suppressed, "OC2002")
+
+
+def test_oc2006_rejects_multiple_primary_clock_target_arguments(audit_factory) -> None:
+    result = audit_factory("create_clock -name core -period 10 [get_ports clk] [get_ports clk2]")
+    finding = _find(result, "OC2006")[0]
+
+    assert any(
+        "accepts at most one positional target collection; got 2" in problem for problem in finding.evidence["problems"]
+    )
+    assert _find(result, "OC2101")
+
+
+def test_primary_clock_allows_multiple_objects_in_one_collection(audit_factory) -> None:
+    result = audit_factory("create_clock -name core -period 10 [get_ports {clk clk2}]")
+
+    assert not _find(result, "OC2006")
+    assert result.modes[0].clocks["core"].targets == {"clk", "clk2"}
+    assert not _find(result, "OC2101")
 
 
 def test_oc2003_conflicting_clock_redefinition_reports_previous_location(audit_factory) -> None:
@@ -316,6 +383,23 @@ create_generated_clock -name divided -divide_by 2 -source [get_ports clk] [get_p
     assert not _find(result, "OC2011")
     assert clock.master_clock == "core"
     assert clock.period == 20.0
+
+
+def test_oc2012_rejects_multiple_generated_clock_target_arguments(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+create_generated_clock -name divided -divide_by 2 -source [get_ports clk] \
+  [get_pins u_ff/Q] [get_ports result]
+"""
+    )
+    finding = _find(result, "OC2012")[0]
+
+    assert any(
+        "requires exactly one positional target collection; got 2" in problem
+        for problem in finding.evidence["problems"]
+    )
+    assert result.modes[0].clocks["divided"].period is None
 
 
 @pytest.mark.parametrize(
@@ -486,10 +570,12 @@ create_generated_clock -name bad -source [get_ports clk] -divide_by 0 [get_pins 
     assert clock.divide_by is None
 
 
-def test_clock_comment_selector_is_not_mistaken_for_a_target(audit_factory) -> None:
+def test_clock_comment_selector_fails_the_scalar_outer_command_closed(audit_factory) -> None:
     result = audit_factory("create_clock -name core -period 10 -comment [get_ports data] [get_ports clk]")
 
-    assert result.modes[0].clocks["core"].targets == {"clk"}
+    assert "OC0003" in [finding.rule_id for finding in result.diagnostics]
+    assert not result.modes[0].clocks
+    assert result.modes[0].coverage.score == 0.0
 
 
 def test_generated_clock_keeps_identical_source_and_target_selector_occurrences(audit_factory) -> None:
@@ -681,7 +767,7 @@ def test_reference_pin_must_resolve_to_exactly_one_port_or_pin(audit_factory) ->
     assert item.valid is True
     assert "data" not in _find(valid, "OC3001")[0].evidence["ports"]
 
-    for reference in ("[get_pins u_ff/*]", "[get_nets q]", "$reference_pin"):
+    for reference in ("[get_pins u_ff/*]", "[get_nets q]"):
         invalid = audit_factory(f"set_input_delay 1 -reference_pin {reference} [get_ports data]")
         finding = next(item for item in _find(invalid, "OC3011") if "-reference_pin" in item.message)
 
@@ -689,6 +775,34 @@ def test_reference_pin_must_resolve_to_exactly_one_port_or_pin(audit_factory) ->
         assert invalid.modes[0].io_delays[0].reference_pin is None
         assert invalid.modes[0].io_delays[0].valid is False
         assert "data" in _find(invalid, "OC3001")[0].evidence["ports"]
+
+    dynamic = audit_factory("set_input_delay 1 -reference_pin $reference_pin [get_ports data]")
+    assert _find(dynamic, "OC0003")
+    assert any("-reference_pin" in item.message for item in _find(dynamic, "OC3011"))
+    assert not dynamic.modes[0].io_delays
+
+
+@pytest.mark.parametrize(
+    ("constraint", "reference_pin"),
+    [
+        ("set_output_delay 1 -reference_pin [all_inputs] [all_outputs]", "data"),
+        ("set_input_delay 1 -reference_pin [all_outputs] [all_inputs]", "result"),
+    ],
+)
+def test_reference_pin_accepts_singleton_all_input_and_output_collections(
+    audit_factory, constraint: str, reference_pin: str
+) -> None:
+    verilog = """
+module top(input data, output result);
+  BUF u_buf (.A(data), .Y(result));
+endmodule
+"""
+    result = audit_factory(constraint, verilog=verilog)
+    item = result.modes[0].io_delays[0]
+
+    assert item.reference_pin == reference_pin
+    assert item.valid is True
+    assert not [finding for finding in _find(result, "OC3011") if "-reference_pin" in finding.message]
 
 
 def test_reference_pin_ignores_but_records_latency_inclusion_flags(audit_factory) -> None:
@@ -972,6 +1086,60 @@ def test_oc4002_rejects_selector_kinds_that_opensta_disallows_by_scope_role(
 
     assert any(problem_fragment in problem for problem in finding.evidence["problems"])
     assert exception.qualifiers["scope_resolvable"] is False
+
+
+def test_exception_endpoint_accepts_all_clocks_selector(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+set_false_path -from [all_clocks] -to [get_ports result]
+"""
+    )
+    exception = result.modes[0].exceptions[0]
+
+    assert not _find(result, "OC4002")
+    assert exception.from_objects == {"core"}
+    assert exception.qualifiers["definition_valid"] is True
+    assert exception.qualifiers["scope_resolvable"] is True
+
+
+@pytest.mark.parametrize(
+    ("group_one", "problem_fragment"),
+    [
+        ("[get_ports clk]", "selectors must return clocks, not ports"),
+        ("[get_clocks {core absent}]", "selector contains 1 unmatched clock pattern"),
+    ],
+)
+def test_clock_groups_require_clock_typed_fully_resolved_selectors(
+    audit_factory, group_one: str, problem_fragment: str
+) -> None:
+    result = audit_factory(
+        f"""
+create_clock -name core -period 10 [get_ports clk]
+create_clock -name aux -period 20 [get_ports clk2]
+set_clock_groups -asynchronous -group {group_one} -group [get_clocks aux]
+"""
+    )
+    finding = next(item for item in _find(result, "OC4002") if "Clock-group" in item.message)
+
+    assert any(problem_fragment in problem for problem in finding.evidence["problems"])
+    assert not [item for item in result.modes[0].exceptions if item.kind == "clock_group"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set_false_path -from missing -to result",
+        "set_multicycle_path 2 -from missing -to result",
+        "set_max_delay 5 -from missing -to result",
+    ],
+)
+def test_oc4002_rejects_literal_exception_scopes_that_resolve_to_nothing(audit_factory, command: str) -> None:
+    result = audit_factory(COMPLETE_SDC + "\n" + command)
+    findings = _find(result, "OC4002")
+
+    assert len(findings) == 1
+    assert "the specified from scope resolves to no objects" in findings[0].evidence["problems"]
 
 
 def test_oc4002_rejects_non_opensta_exclusive_clock_group_alias(audit_factory) -> None:

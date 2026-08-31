@@ -16,8 +16,8 @@
           "coverage": {
             "default": 57.5
           },
-          "diagnostic_count": 15,
-          "errors": 8,
+          "diagnostic_count": 16,
+          "errors": 9,
           "mode_count": 1,
           "notes": 1,
           "warnings": 6
@@ -396,6 +396,40 @@
           "ruleId": "OC2011"
         },
         {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Generated clock source or target cardinality is invalid\n\nNarrow -source to one port or pin and resolve the generated-clock target collection."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "51fa1a4fe03941f2a682"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "divided",
+              "problems": [
+                "-source must resolve to exactly one port or pin"
+              ],
+              "source_targets": []
+            },
+            "mode": "default",
+            "rationale": "A generated clock needs one unambiguous source port/pin and a nonempty target collection."
+          },
+          "ruleId": "OC2012"
+        },
+        {
           "level": "warning",
           "locations": [
             {
@@ -663,6 +697,20 @@
               },
               "shortDescription": {
                 "text": "A generated-clock source is unrelated to the selected master."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2012.md",
+              "id": "OC2012",
+              "name": "invalid-generated-clock-transform",
+              "properties": {
+                "category": "generated clocks"
+              },
+              "shortDescription": {
+                "text": "Generated-clock transform options are malformed, conflicting, or ambiguous."
               }
             },
             {

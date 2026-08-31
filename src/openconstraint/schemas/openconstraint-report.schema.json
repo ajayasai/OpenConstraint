@@ -539,6 +539,7 @@
         "period",
         "waveform",
         "waveform_explicit",
+        "valid",
         "generated",
         "source_targets",
         "master_clock",
@@ -575,6 +576,9 @@
           ]
         },
         "waveform_explicit": {
+          "type": "boolean"
+        },
+        "valid": {
           "type": "boolean"
         },
         "generated": {

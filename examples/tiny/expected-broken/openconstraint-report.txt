@@ -40,6 +40,9 @@ ERROR   OC2010 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divid
 ERROR   OC2011 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divided' source is not reachable from its master clock
          Fix: Fix -source/-master_clock or the netlist clock path; inspect the HTML clock graph.
          Fingerprint: 5d48e4825e2244070e98
+ERROR   OC2012 [default] examples/tiny/broken.sdc:4:1 — Generated clock source or target cardinality is invalid
+         Fix: Narrow -source to one port or pin and resolve the generated-clock target collection.
+         Fingerprint: 51fa1a4fe03941f2a682
 WARNING OC1002 [default] examples/tiny/broken.sdc:6:1 — Wildcard query matches 8 of 8 ports
          Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
          Fingerprint: c3f091eb5e9d28e97b15
@@ -53,5 +56,5 @@ WARNING OC4011 [default] examples/tiny/broken.sdc:7:1 — Multicycle path applie
          Fix: State setup and hold separately; the usual same-clock pairing is setup N with hold N-1.
          Fingerprint: c653e4eb148b997c95f5
 
-Summary: 8 error(s), 6 warning(s), 1 note(s)
+Summary: 9 error(s), 6 warning(s), 1 note(s)
 Structural coverage measures modeled obligations; it does not prove functional false paths or sign-off correctness.

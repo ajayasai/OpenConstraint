@@ -1094,6 +1094,7 @@ def _semantic_snapshot(result: AuditResult, design: Design, path_aliases: Mappin
                 "period": clock.period,
                 "waveform": list(clock.waveform) if clock.waveform is not None else None,
                 "waveform_explicit": clock.waveform_explicit,
+                "valid": clock.name in mode.valid_clocks,
                 "generated": clock.generated,
                 "source_targets": sorted(clock.source_targets),
                 "master_clock": clock.master_clock,

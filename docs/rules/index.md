@@ -8,10 +8,11 @@ may be refined, but an ID is not silently reused for a different meaning.
 | --- | --- | --- | --- |
 | [OC0001](OC0001.md) | error | malformed-sdc | Loading |
 | [OC0002](OC0002.md) | error | incomplete-structural-model | Loading |
+| [OC0003](OC0003.md) | error | unevaluated-tcl-command | Loading |
 | [OC1001](OC1001.md) | error | zero-object-query | Queries |
 | [OC1002](OC1002.md) | warning | dangerously-broad-query | Queries |
-| [OC1003](OC1003.md) | warning | dynamic-query | Queries |
-| [OC1004](OC1004.md) | warning | unsupported-query | Queries |
+| [OC1003](OC1003.md) | error | dynamic-query | Queries |
+| [OC1004](OC1004.md) | error | unsupported-query | Queries |
 | [OC2001](OC2001.md) | error | invalid-clock-period | Clocks |
 | [OC2002](OC2002.md) | note | implicit-clock-waveform | Clocks |
 | [OC2003](OC2003.md) | error | clock-redefined | Clocks |

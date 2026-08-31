@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 
 from openconstraint.model import SourceLocation
-from openconstraint.parsers.tcl import TclCommand, TclParseIssue, bracket_body, parse_tcl, split_words, unquote
+from openconstraint.parsers.tcl import (
+    TclCommand,
+    TclParseIssue,
+    TclSyntaxError,
+    bracket_body,
+    decode_tcl_word,
+    parse_tcl,
+    split_tcl_list_preserving_backslashes,
+    split_words,
+    tcl_word_has_substitution,
+)
 
 QUERY_KINDS = {
     "get_ports": "ports",
@@ -20,6 +30,14 @@ QUERY_KINDS = {
     "all_outputs": "all_outputs",
     "all_clocks": "all_clocks",
     "all_registers": "registers",
+}
+
+_QUERY_COMMAND_ALIASES = {
+    "get_cell": "get_cells",
+    "get_clock": "get_clocks",
+    "get_net": "get_nets",
+    "get_pin": "get_pins",
+    "get_port": "get_ports",
 }
 
 _ALL_REGISTER_FLAGS = frozenset(
@@ -74,8 +92,7 @@ _UNMODELED_SELECTOR_OPTIONS: dict[str, frozenset[str]] = {
 }
 _ALL_SELECTOR_FLAGS = frozenset(option for options in _SELECTOR_FLAG_OPTIONS.values() for option in options)
 _ALL_SELECTOR_VALUES = frozenset(option for options in _SELECTOR_VALUE_OPTIONS.values() for option in options)
-
-_TCL_VARIABLE = re.compile(r"(?<!\\)\$(?:[A-Za-z_:][A-Za-z0-9_:]*|\{[^}]+\})")
+MAX_SELECTOR_NESTING = 64
 
 FLAG_OPTIONS = {
     "-add",
@@ -135,10 +152,21 @@ class ParsedCommand:
     option_occurrences: list[tuple[str, str]] = field(default_factory=list)
     positionals: list[str] = field(default_factory=list)
     selectors: list[Selector] = field(default_factory=list)
+    parse_errors: list[str] = field(default_factory=list)
+    opaque_substitutions: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:
         return self.tcl.name
+
+    @property
+    def dynamic_name(self) -> bool:
+        if not self.tcl.words:
+            return False
+        try:
+            return tcl_word_has_substitution(self.tcl.words[0])
+        except TclSyntaxError:
+            return True
 
     @property
     def location(self) -> SourceLocation:
@@ -163,6 +191,142 @@ class SdcDocument:
     issues: list[TclParseIssue]
 
 
+@dataclass(frozen=True, slots=True)
+class _CommandGrammar:
+    """Pinned OpenSTA ``parse_key_args`` grammar for a modeled command.
+
+    OpenSTA resolves an abbreviated keyword by taking the first declared key
+    that starts with the supplied spelling, then the first declared flag.
+    Repeated ``-through`` and ``-group`` operands are parsed later by their
+    command procedures and therefore require their exact spellings.
+    """
+
+    value_options: tuple[str, ...]
+    flag_options: tuple[str, ...]
+    repeated_value_options: tuple[str, ...] = ()
+    semantic_error_flags: tuple[str, ...] = ()
+
+
+_EXCEPTION_VALUE_OPTIONS = (
+    "-from",
+    "-rise_from",
+    "-fall_from",
+    "-to",
+    "-rise_to",
+    "-fall_to",
+    "-comment",
+)
+_EXCEPTION_THROUGH_OPTIONS = ("-through", "-rise_through", "-fall_through")
+_COMMAND_GRAMMARS: dict[str, _CommandGrammar] = {
+    "create_clock": _CommandGrammar(
+        ("-name", "-period", "-waveform", "-comment"),
+        ("-add",),
+    ),
+    "create_generated_clock": _CommandGrammar(
+        (
+            "-name",
+            "-source",
+            "-master_clock",
+            "-divide_by",
+            "-multiply_by",
+            "-duty_cycle",
+            "-edges",
+            "-edge_shift",
+            "-comment",
+        ),
+        ("-invert", "-combinational", "-add"),
+    ),
+    "set_input_delay": _CommandGrammar(
+        ("-clock", "-reference_pin"),
+        (
+            "-rise",
+            "-fall",
+            "-max",
+            "-min",
+            "-clock_fall",
+            "-add_delay",
+            "-source_latency_included",
+            "-network_latency_included",
+        ),
+    ),
+    "set_output_delay": _CommandGrammar(
+        ("-clock", "-reference_pin"),
+        (
+            "-rise",
+            "-fall",
+            "-max",
+            "-min",
+            "-clock_fall",
+            "-add_delay",
+            "-source_latency_included",
+            "-network_latency_included",
+        ),
+    ),
+    "set_false_path": _CommandGrammar(
+        _EXCEPTION_VALUE_OPTIONS,
+        ("-setup", "-hold", "-rise", "-fall", "-reset_path"),
+        _EXCEPTION_THROUGH_OPTIONS,
+    ),
+    "set_multicycle_path": _CommandGrammar(
+        _EXCEPTION_VALUE_OPTIONS,
+        ("-setup", "-hold", "-rise", "-fall", "-start", "-end", "-reset_path"),
+        _EXCEPTION_THROUGH_OPTIONS,
+    ),
+    "set_max_delay": _CommandGrammar(
+        _EXCEPTION_VALUE_OPTIONS,
+        ("-rise", "-fall", "-ignore_clock_latency", "-reset_path", "-probe"),
+        _EXCEPTION_THROUGH_OPTIONS,
+    ),
+    "set_min_delay": _CommandGrammar(
+        _EXCEPTION_VALUE_OPTIONS,
+        ("-rise", "-fall", "-ignore_clock_latency", "-reset_path", "-probe"),
+        _EXCEPTION_THROUGH_OPTIONS,
+    ),
+    "set_clock_groups": _CommandGrammar(
+        ("-name", "-comment"),
+        ("-logically_exclusive", "-physically_exclusive", "-asynchronous", "-allow_paths"),
+        ("-group",),
+        # Keep this legacy alias visible to the dedicated OC4002 diagnostic,
+        # which rejects it without creating any clock-group exceptions.
+        ("-exclusive",),
+    ),
+}
+MODELED_SDC_COMMANDS = frozenset(_COMMAND_GRAMMARS)
+
+# A recognized selector substitution is statically trustworthy only where the
+# modeled command expects an object collection.  Tcl still evaluates selectors
+# used as scalar strings (for example ``-name [get_ports clk]``), but preserving
+# their source spelling would silently change the scalar value.  Those
+# occurrences are retained for independent query auditing and marked opaque by
+# the command parser below.
+_EXCEPTION_COLLECTION_SELECTOR_OPTIONS = frozenset(
+    option for option in _EXCEPTION_VALUE_OPTIONS + _EXCEPTION_THROUGH_OPTIONS if option != "-comment"
+)
+_COLLECTION_SELECTOR_OPTIONS: dict[str, frozenset[str]] = {
+    "create_generated_clock": frozenset({"-source", "-master_clock"}),
+    "set_input_delay": frozenset({"-clock", "-reference_pin"}),
+    "set_output_delay": frozenset({"-clock", "-reference_pin"}),
+    "set_false_path": _EXCEPTION_COLLECTION_SELECTOR_OPTIONS,
+    "set_multicycle_path": _EXCEPTION_COLLECTION_SELECTOR_OPTIONS,
+    "set_max_delay": _EXCEPTION_COLLECTION_SELECTOR_OPTIONS,
+    "set_min_delay": _EXCEPTION_COLLECTION_SELECTOR_OPTIONS,
+    "set_clock_groups": frozenset({"-group"}),
+}
+
+
+def _selector_positional_is_opaque(command_name: str, positional_index: int) -> bool:
+    """Return whether a selector occupies a scalar/unsupported positional role."""
+
+    if command_name in {"set_input_delay", "set_output_delay"}:
+        return positional_index == 0
+    if command_name in {"set_multicycle_path", "set_max_delay", "set_min_delay"}:
+        return positional_index == 0
+    # Clock target selectors and extra operands remain available to their
+    # rule-specific arity diagnostics. False paths and clock groups already
+    # reject stray positionals canonically as OC0001.
+    return False
+
+
 def _normalize_selector_option(command_name: str, word: str) -> str:
     """Apply Tcl word quoting and modeled OpenSTA option abbreviations."""
 
@@ -170,7 +334,7 @@ def _normalize_selector_option(command_name: str, word: str) -> str:
     # of the argument.  OpenSTA's parse_key_args therefore treats
     # ``{ -quiet }`` as a positional pattern, not the ``-quiet`` flag.  Do not
     # trim it here or a zero-match query can be widened to the implicit ``*``.
-    value = unquote(word)
+    value = decode_tcl_word(word)
     if not (len(value) >= 2 and value[0] == "-" and value[1].isalpha()):
         return value
     options = _SELECTOR_FLAG_OPTIONS[command_name] | _SELECTOR_VALUE_OPTIONS[command_name]
@@ -180,17 +344,55 @@ def _normalize_selector_option(command_name: str, word: str) -> str:
     return matches[0] if len(matches) == 1 else value
 
 
-def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
+@lru_cache(maxsize=4_096)
+def _parse_selector_body(body: str) -> tuple[tuple[TclCommand, ...], tuple[TclParseIssue, ...]]:
+    """Parse one bracket body once, independent of its outer source location."""
+
+    commands, issues = parse_tcl(body, "<selector>")
+    return tuple(commands), tuple(issues)
+
+
+def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Selector | None:
     body = bracket_body(word)
     if body is None:
         return None
-    words = list(split_words(body))
-    if not words:
+    commands, issues = _parse_selector_body(body)
+    if not commands:
         return None
-    command_name = unquote(words.pop(0))
+    first_command = commands[0]
+    words = list(first_command.words)
+    try:
+        command_name = decode_tcl_word(words.pop(0))
+    except TclSyntaxError:
+        return None
+    command_name = _QUERY_COMMAND_ALIASES.get(command_name, command_name)
     if command_name not in QUERY_KINDS:
         return None
     kind = QUERY_KINDS[command_name]
+    if issues or len(commands) != 1:
+        reasons: list[str] = []
+        if len(commands) != 1:
+            reasons.append(f"selector command substitution must contain exactly one Tcl command; got {len(commands)}")
+        reasons.extend(f"selector command has malformed Tcl: {issue.message}" for issue in issues)
+        return Selector(
+            command_name=command_name,
+            kind=kind,
+            patterns=(),
+            raw=word,
+            location=location,
+            dynamic=False,
+            parse_error="; ".join(reasons),
+        )
+    if depth >= MAX_SELECTOR_NESTING:
+        return Selector(
+            command_name=command_name,
+            kind=kind,
+            patterns=(),
+            raw=word,
+            location=location,
+            dynamic=False,
+            parse_error=f"selector nesting exceeds the static limit of {MAX_SELECTOR_NESTING}",
+        )
     hierarchical = False
     regexp = False
     nocase = False
@@ -199,6 +401,7 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
     of_objects_raw: str | None = None
     nested_selectors: list[Selector] = []
     patterns: list[str] = []
+    positional_dynamic = False
     positional_count = 0
     parse_errors: list[str] = []
     allowed_flags = _SELECTOR_FLAG_OPTIONS[command_name]
@@ -207,7 +410,13 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
     index = 0
     while index < len(words):
         raw_value = words[index]
-        value = _normalize_selector_option(command_name, raw_value)
+        try:
+            value = _normalize_selector_option(command_name, raw_value)
+        except TclSyntaxError as error:
+            positional_count += 1
+            parse_errors.append(f"{command_name} has malformed Tcl word: {error}")
+            index += 1
+            continue
         if value in _ALL_SELECTOR_VALUES:
             supported_by_command = value in allowed_values
             if not supported_by_command:
@@ -218,7 +427,7 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
             else:
                 index += 1
                 operand = words[index]
-                nested = _parse_selector(operand, location)
+                nested = _parse_selector(operand, location, depth + 1)
                 if nested is not None:
                     nested_selectors.append(nested)
                 if value == "-of_objects":
@@ -230,7 +439,10 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
                 if supported_by_command and value in unmodeled_options:
                     parse_errors.append(f"{command_name} {value} is not modeled by the static backend")
                 elif supported_by_command and value == "-filter":
-                    filter_expression = unquote(operand)
+                    try:
+                        filter_expression = decode_tcl_word(operand)
+                    except TclSyntaxError as error:
+                        parse_errors.append(f"{command_name} {value} has malformed Tcl value: {error}")
         elif value in _ALL_SELECTOR_FLAGS:
             if value not in allowed_flags:
                 parse_errors.append(f"{command_name} does not support option {value}")
@@ -246,12 +458,27 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
             parse_errors.append(f"{command_name} does not support option {value}")
         else:
             positional_count += 1
-            nested = _parse_selector(raw_value, location)
+            nested = _parse_selector(raw_value, location, depth + 1)
             if nested is not None:
                 nested_selectors.append(nested)
-            unpacked = unquote(raw_value).strip()
-            if unpacked:
-                patterns.extend(item for item in split_words(unpacked) if item)
+            try:
+                word_dynamic = tcl_word_has_substitution(raw_value)
+            except TclSyntaxError as error:
+                word_dynamic = False
+                parse_errors.append(f"{command_name} has malformed Tcl word: {error}")
+            positional_dynamic = positional_dynamic or word_dynamic
+            if word_dynamic:
+                # The substitution result is unknown. Preserve bracket-aware
+                # grouping for deterministic nested-query diagnostics rather
+                # than pretending its source text is an evaluated Tcl list.
+                patterns.extend(item for item in split_words(value) if item)
+            elif command_name.startswith("get_"):
+                try:
+                    patterns.extend(split_tcl_list_preserving_backslashes(value))
+                except TclSyntaxError as error:
+                    parse_errors.append(f"{command_name} has malformed Tcl pattern list: {error}")
+            elif value:
+                patterns.append(value)
         index += 1
     # OpenSTA's get_* commands accept zero or one positional Tcl argument.
     # That one word may itself be a Tcl list containing multiple patterns.
@@ -272,10 +499,7 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
     # ignored words must therefore not make an otherwise static selector look
     # Tcl-dynamic.  A dynamic nested source still makes the whole query
     # dynamic, because that collection determines the result.
-    if of_objects_raw is not None:
-        dynamic = of_objects is None or of_objects.dynamic
-    else:
-        dynamic = any(_TCL_VARIABLE.search(item) or re.search(r"\[[A-Za-z_][A-Za-z0-9_]*\s", item) for item in patterns)
+    dynamic = (of_objects is None or of_objects.dynamic) if of_objects_raw is not None else positional_dynamic
     return Selector(
         command_name=command_name,
         kind=kind,
@@ -294,33 +518,146 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
     )
 
 
-def _parse_command(command: TclCommand) -> ParsedCommand:
-    parsed = ParsedCommand(tcl=command)
-    words = list(command.words[1:])
+def _is_keyword(value: str) -> bool:
+    """Match OpenSTA ``is_keyword_arg`` without interpreting numbers."""
+
+    return len(value) >= 2 and value[0] == "-" and value[1].isalpha()
+
+
+def _decode_command_argument(parsed: ParsedCommand, raw: str) -> str:
+    try:
+        return decode_tcl_word(raw)
+    except TclSyntaxError as error:
+        message = f"{parsed.name} has malformed Tcl word: {error}"
+        if message not in parsed.parse_errors:
+            parsed.parse_errors.append(message)
+        return raw
+
+
+def _canonical_modeled_option(value: str, grammar: _CommandGrammar) -> tuple[str, str] | None:
+    """Return ``(canonical spelling, arity)`` using OpenSTA's match order."""
+
+    if value in grammar.value_options:
+        return value, "value"
+    if value in grammar.flag_options:
+        return value, "flag"
+    if value in grammar.repeated_value_options:
+        return value, "value"
+    if value in grammar.semantic_error_flags:
+        return value, "flag"
+
+    # parse_key_args searches keys before flags and takes the first prefix
+    # match in declaration order. The later through/group parsers do not.
+    for option in grammar.value_options:
+        if option.startswith(value):
+            return option, "value"
+    for option in grammar.flag_options:
+        if option.startswith(value):
+            return option, "flag"
+    return None
+
+
+def _record_option(parsed: ParsedCommand, option: str, value: str) -> None:
+    parsed.options.setdefault(option, []).append(value)
+    parsed.option_occurrences.append((option, value))
+
+
+def _parse_modeled_command(parsed: ParsedCommand, words: list[str], grammar: _CommandGrammar) -> None:
+    index = 0
+    while index < len(words):
+        raw_word = words[index]
+        selector = _parse_selector(raw_word, parsed.location)
+        value = _decode_command_argument(parsed, raw_word)
+        if _is_keyword(value):
+            option = _canonical_modeled_option(value, grammar)
+            if option is None:
+                parsed.parse_errors.append(f"{parsed.name} does not support option {value}")
+            else:
+                canonical, arity = option
+                if arity == "flag":
+                    _record_option(parsed, canonical, "true")
+                elif index + 1 >= len(words):
+                    parsed.parse_errors.append(f"{parsed.name} {canonical} missing value")
+                    _record_option(parsed, canonical, "")
+                else:
+                    index += 1
+                    raw_operand = words[index]
+                    operand_selector = _parse_selector(raw_operand, parsed.location)
+                    operand = _decode_command_argument(parsed, raw_operand)
+                    # Keep the source spelling for evaluated collections so
+                    # selector.raw remains a stable join key in the engine.
+                    # Non-selector values use their Tcl-decoded spelling.
+                    _record_option(
+                        parsed,
+                        canonical,
+                        raw_operand if operand_selector is not None else operand,
+                    )
+                    if operand_selector is not None:
+                        parsed.selectors.append(replace(operand_selector, option=canonical))
+                        if canonical not in _COLLECTION_SELECTOR_OPTIONS.get(parsed.name, frozenset()):
+                            parsed.opaque_substitutions.append(raw_operand)
+        else:
+            positional_index = len(parsed.positionals)
+            parsed.positionals.append(raw_word if selector is not None else value)
+            if selector is not None:
+                parsed.selectors.append(selector)
+                if _selector_positional_is_opaque(parsed.name, positional_index):
+                    parsed.opaque_substitutions.append(raw_word)
+        index += 1
+
+
+def _parse_generic_command(parsed: ParsedCommand, words: list[str]) -> None:
+    """Retain the broad parser for commands outside the modeled audit set."""
+
     index = 0
     while index < len(words):
         word = words[index]
-        selector = _parse_selector(word, command.location)
+        selector = _parse_selector(word, parsed.location)
         if selector:
             parsed.selectors.append(selector)
         if len(word) >= 2 and word[0] == "-" and word[1].isalpha():
             if word in FLAG_OPTIONS:
-                parsed.options.setdefault(word, []).append("true")
-                parsed.option_occurrences.append((word, "true"))
+                _record_option(parsed, word, "true")
             elif index + 1 < len(words):
                 index += 1
                 value = words[index]
-                parsed.options.setdefault(word, []).append(value)
-                parsed.option_occurrences.append((word, value))
-                nested = _parse_selector(value, command.location)
+                _record_option(parsed, word, value)
+                nested = _parse_selector(value, parsed.location)
                 if nested:
                     parsed.selectors.append(replace(nested, option=word))
             else:
-                parsed.options.setdefault(word, []).append("")
-                parsed.option_occurrences.append((word, ""))
+                _record_option(parsed, word, "")
         else:
             parsed.positionals.append(word)
         index += 1
+
+
+def _parse_command(command: TclCommand) -> ParsedCommand:
+    parsed = ParsedCommand(tcl=command)
+    words = list(command.words[1:])
+    if command.words:
+        try:
+            tcl_word_has_substitution(command.words[0])
+        except TclSyntaxError as error:
+            parsed.parse_errors.append(f"command name has malformed Tcl word: {error}")
+    for word in words:
+        try:
+            active_substitution = tcl_word_has_substitution(word)
+        except TclSyntaxError as error:
+            message = f"{parsed.name} has malformed Tcl word: {error}"
+            if message not in parsed.parse_errors:
+                parsed.parse_errors.append(message)
+            continue
+        if active_substitution and _parse_selector(word, command.location) is None:
+            parsed.opaque_substitutions.append(word)
+
+    grammar = _COMMAND_GRAMMARS.get(command.name)
+    if grammar is None:
+        _parse_generic_command(parsed, words)
+    else:
+        _parse_modeled_command(parsed, words, grammar)
+        if command.name in {"set_false_path", "set_clock_groups"} and parsed.positionals:
+            parsed.parse_errors.append(f"{command.name} accepts no positional operands; got {len(parsed.positionals)}")
     return parsed
 
 

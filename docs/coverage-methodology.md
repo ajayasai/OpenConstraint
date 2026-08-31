@@ -8,15 +8,16 @@ measure path slack, prove exceptions, or certify sign-off completeness.
 
 | Key | Base weight | Numerator | Denominator |
 | --- | ---: | --- | --- |
-| `sequential_endpoints` | 0.50 | Sequential data endpoints whose instance has a clock pin reached by a defined clock | All sequential data endpoints identified from Liberty or conservative cell-name/pin inference |
+| `sequential_endpoints` | 0.50 | Sequential data endpoints whose instance has a clock pin reached by a valid clock | All sequential data endpoints identified from Liberty or conservative cell-name/pin inference |
 | `input_delays` | 0.20 | Covered min/max × rise/fall slots from active valid input delays | Four slots for every distinct active clock-set/reference-pin/clock-edge relationship on each required input/inout port; a port with no relationship has one default four-slot obligation |
 | `output_delays` | 0.20 | Covered min/max × rise/fall slots from active valid output delays | Four slots for every distinct active clock-set/reference-pin/clock-edge relationship on each required output/inout port; a port with no relationship has one default four-slot obligation |
 | `query_health` | 0.10 | Object queries that resolve without an error, match at least one object, and have no unmatched collection pattern | All object queries collected from supported constraints, including dynamic and unsupported queries |
 
-Dynamic queries are reported by `OC1003` and count as unresolved in the
-query-health denominator because unknown scope must not improve the coverage
-score. Unsupported static filters and partially unmatched collections likewise
-count as unresolved.
+Dynamic queries are reported by `OC1003` and unsupported queries by `OC1004`.
+They remain visible as unresolved query-health obligations, but either finding
+also invalidates the aggregate trusted score to `0.0/F` because the dependent
+constraint scope is unknowable. Partially unmatched supported collections count
+as unresolved without automatically invalidating the aggregate.
 
 ## Formula
 
@@ -40,9 +41,11 @@ direction, or otherwise invalid record covers none. An invalid record that can
 still be associated with a required port establishes its attempted relationship
 in the denominator, so invalid intent cannot disappear from the score.
 
-If Verilog, Liberty, or elaboration warnings make the structural model
-untrusted (`OC0002`), the final score is forced to `0.0` with grade `F` in every
-mode. Component counts remain visible as debugging evidence, but they are not
+Malformed Tcl/SDC (`OC0001`), unevaluated Tcl execution (`OC0003`), dynamic
+queries (`OC1003`), or unsupported queries (`OC1004`) force the affected mode's
+score to `0.0` with grade `F`. Verilog, Liberty, or elaboration warnings that
+invalidate the structural model (`OC0002`) force the same result in every mode.
+Component counts remain visible as debugging evidence, but they are not
 promoted into a trustworthy aggregate score.
 
 The score is rounded to two decimal places. Grades are display aids:
@@ -77,7 +80,11 @@ state.
   justified or complete for all clock relationships.
 - Clock uncertainty, latency, transition, derating, or propagated-clock quality.
 - Liberty timing conditions and functional case analysis beyond declared
-  input/output dependency extraction.
+input/output dependency extraction.
+
+Malformed or otherwise invalid clock attempts remain in report provenance but
+are excluded from reachability, required-I/O exemptions, query resolution,
+exception state, graph data, and coverage credit.
 - Whether finite input/output delay values and interface protocol intent are
   physically correct. The score measures structural min/max and rise/fall slot
   presence, not whether the values or selected relationships are appropriate.
