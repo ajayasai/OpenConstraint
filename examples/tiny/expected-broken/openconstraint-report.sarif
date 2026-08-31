@@ -16,11 +16,11 @@
           "coverage": {
             "default": 57.5
           },
-          "diagnostic_count": 13,
-          "errors": 7,
+          "diagnostic_count": 15,
+          "errors": 8,
           "mode_count": 1,
           "notes": 1,
-          "warnings": 5
+          "warnings": 6
         }
       },
       "results": [
@@ -107,16 +107,20 @@
             }
           ],
           "message": {
-            "text": "[default] Object query matches zero ports: [get_ports missing_clk]\n\nCorrect the pattern or hierarchy and confirm the intended object exists in this mode."
+            "text": "[default] Object query matches zero ports: [get_ports missing_clk]\n\nCorrect every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
           },
           "partialFingerprints": {
             "openconstraint/v1": "8e9fcf3d27dd592952ee"
           },
           "properties": {
             "evidence": {
+              "matched_count": 0,
               "object_kind": "ports",
               "query": "[get_ports missing_clk]",
-              "universe_size": 8
+              "universe_size": 8,
+              "unmatched_patterns": [
+                "missing_clk"
+              ]
             },
             "mode": "default",
             "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows."
@@ -153,6 +157,39 @@
             "rationale": "A primary clock needs a positive period; generated clocks need a resolvable master or explicit period."
           },
           "ruleId": "OC2001"
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Primary clock definition is invalid\n\nProvide a stable -name, use -add only with that name, and resolve every supplied target."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "a68692a96ba2684ed594"
+          },
+          "properties": {
+            "evidence": {
+              "clock": "ghost_clock",
+              "problems": [
+                "the supplied clock target collection is empty"
+              ]
+            },
+            "mode": "default",
+            "rationale": "A malformed clock identity or target can create an unintended virtual clock or additive definition."
+          },
+          "ruleId": "OC2006"
         },
         {
           "level": "warning",
@@ -245,16 +282,20 @@
             }
           ],
           "message": {
-            "text": "[default] Object query matches zero pins: [get_pins u_missing/CLK]\n\nCorrect the pattern or hierarchy and confirm the intended object exists in this mode."
+            "text": "[default] Object query matches zero pins: [get_pins u_missing/CLK]\n\nCorrect every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
           },
           "partialFingerprints": {
             "openconstraint/v1": "0834c05a44c5084f20c4"
           },
           "properties": {
             "evidence": {
+              "matched_count": 0,
               "object_kind": "pins",
               "query": "[get_pins u_missing/CLK]",
-              "universe_size": 12
+              "universe_size": 12,
+              "unmatched_patterns": [
+                "u_missing/CLK"
+              ]
             },
             "mode": "default",
             "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows."
@@ -488,6 +529,37 @@
             "rationale": "A false path removes timing analysis while a multicycle path modifies it; applying both obscures intent."
           },
           "ruleId": "OC4001"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/tiny/broken.sdc"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[default] Multicycle path applies multiplier 2 to both setup and hold\n\nState setup and hold separately; the usual same-clock pairing is setup N with hold N-1."
+          },
+          "partialFingerprints": {
+            "openconstraint/v1": "c653e4eb148b997c95f5"
+          },
+          "properties": {
+            "evidence": {
+              "expected_hold_multiplier": 1,
+              "setup_multiplier": 2
+            },
+            "mode": "default",
+            "rationale": "Applying one multiplier to both checks commonly shifts hold too far and can hide a real short-path failure."
+          },
+          "ruleId": "OC4011"
         }
       ],
       "tool": {
@@ -503,11 +575,10 @@
               "id": "OC1001",
               "name": "zero-object-query",
               "properties": {
-                "category": "queries",
-                "precision": "high"
+                "category": "queries"
               },
               "shortDescription": {
-                "text": "An SDC object query matches nothing."
+                "text": "An SDC object-query pattern matches nothing."
               }
             },
             {
@@ -518,8 +589,7 @@
               "id": "OC1002",
               "name": "dangerously-broad-query",
               "properties": {
-                "category": "queries",
-                "precision": "high"
+                "category": "queries"
               },
               "shortDescription": {
                 "text": "A wildcard query covers a risky share of its object universe."
@@ -533,8 +603,7 @@
               "id": "OC2001",
               "name": "invalid-clock-period",
               "properties": {
-                "category": "clocks",
-                "precision": "high"
+                "category": "clocks"
               },
               "shortDescription": {
                 "text": "A clock has no valid positive period."
@@ -548,11 +617,24 @@
               "id": "OC2002",
               "name": "implicit-clock-waveform",
               "properties": {
-                "category": "clocks",
-                "precision": "high"
+                "category": "clocks"
               },
               "shortDescription": {
                 "text": "A primary clock uses the valid implicit 50% waveform."
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC2006.md",
+              "id": "OC2006",
+              "name": "invalid-clock-definition",
+              "properties": {
+                "category": "clocks"
+              },
+              "shortDescription": {
+                "text": "A primary clock has an invalid identity, target, or additive definition."
               }
             },
             {
@@ -563,8 +645,7 @@
               "id": "OC2010",
               "name": "generated-clock-source-missing",
               "properties": {
-                "category": "generated clocks",
-                "precision": "high"
+                "category": "generated clocks"
               },
               "shortDescription": {
                 "text": "A generated clock source resolves to nothing."
@@ -578,8 +659,7 @@
               "id": "OC2011",
               "name": "generated-clock-master-invalid",
               "properties": {
-                "category": "generated clocks",
-                "precision": "high"
+                "category": "generated clocks"
               },
               "shortDescription": {
                 "text": "A generated-clock source is unrelated to the selected master."
@@ -593,8 +673,7 @@
               "id": "OC3001",
               "name": "input-delay-missing",
               "properties": {
-                "category": "I/O",
-                "precision": "high"
+                "category": "I/O"
               },
               "shortDescription": {
                 "text": "A non-clock input is missing an input delay."
@@ -608,8 +687,7 @@
               "id": "OC3002",
               "name": "output-delay-missing",
               "properties": {
-                "category": "I/O",
-                "precision": "high"
+                "category": "I/O"
               },
               "shortDescription": {
                 "text": "An output is missing an output delay."
@@ -623,15 +701,28 @@
               "id": "OC4001",
               "name": "overlapping-exception",
               "properties": {
-                "category": "exceptions",
-                "precision": "high"
+                "category": "exceptions"
               },
               "shortDescription": {
                 "text": "Timing exceptions overlap or shadow one another."
               }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://github.com/ajayasai/OpenConstraint/blob/main/docs/rules/OC4011.md",
+              "id": "OC4011",
+              "name": "multicycle-setup-hold-pair",
+              "properties": {
+                "category": "exceptions"
+              },
+              "shortDescription": {
+                "text": "A multicycle setup/hold relationship needs review."
+              }
             }
           ],
-          "version": "0.2.0b0"
+          "version": "0.3.0b0"
         }
       }
     }

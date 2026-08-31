@@ -44,8 +44,8 @@ def test_complete_design_has_100_percent_coverage_and_exact_component_counts(aud
     assert coverage.score == 100.0
     assert coverage.grade == "A"
     assert (components["sequential_endpoints"].covered, components["sequential_endpoints"].total) == (1, 1)
-    assert (components["input_delays"].covered, components["input_delays"].total) == (3, 3)
-    assert (components["output_delays"].covered, components["output_delays"].total) == (1, 1)
+    assert (components["input_delays"].covered, components["input_delays"].total) == (12, 12)
+    assert (components["output_delays"].covered, components["output_delays"].total) == (4, 4)
     assert (components["query_health"].covered, components["query_health"].total) == (3, 3)
 
 
@@ -58,9 +58,63 @@ set_input_delay 1 -clock core [get_ports data]
     )
     coverage = result.modes[0].coverage
 
-    # 0.50*(1/1) + 0.20*(1/3) + 0.20*(0/1) + 0.10*(2/2)
+    # 0.50*(1/1) + 0.20*(4/12) + 0.20*(0/4) + 0.10*(2/2)
     assert coverage.score == 66.67
     assert coverage.grade == "D"
+
+
+def test_io_delay_coverage_counts_min_max_by_transition_slots(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay 1 -clock core -min -rise [get_ports data]
+set_output_delay 2 -clock core -max -fall [get_ports result]
+"""
+    )
+    components = _components(result)
+
+    # data covers one slot; clk2 and spare each retain a default four-slot obligation.
+    assert (components["input_delays"].covered, components["input_delays"].total) == (1, 12)
+    assert components["input_delays"].percentage == 8.33
+    assert (components["output_delays"].covered, components["output_delays"].total) == (1, 4)
+    assert components["output_delays"].percentage == 25.0
+
+
+def test_io_delay_coverage_normalizes_each_distinct_relationship(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+create_clock -name auxiliary -period 12 [get_ports clk2]
+set_input_delay 1 -clock core [get_ports data]
+set_input_delay 2 -clock auxiliary -min -rise -clock_fall -add_delay [get_ports data]
+set_input_delay 3 -clock core -reference_pin [get_pins u_ff/Q] -max -fall -add_delay [get_ports data]
+"""
+    )
+    component = _components(result)["input_delays"]
+
+    # OpenSTA stores reference-pin metadata on the whole core/rise
+    # relationship, so the third command updates that relationship rather than
+    # creating a third one. Core covers four slots and auxiliary covers one;
+    # clk2 and spare retain default four-slot obligations.
+    assert (component.covered, component.total) == (5, 16)
+    assert component.percentage == 31.25
+
+
+def test_invalid_io_delay_relationship_adds_zero_covered_slot_obligation(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay 1 -clock core [get_ports data]
+set_input_delay invalid -clock core -clock_fall [get_ports data]
+"""
+    )
+    component = _components(result)["input_delays"]
+
+    # The complete rising-edge relationship covers four slots. The invalid
+    # falling-edge attempt adds four uncovered slots. Two other required ports
+    # each retain a default four-slot obligation.
+    assert (component.covered, component.total) == (4, 16)
+    assert component.percentage == 25.0
 
 
 def test_nonapplicable_component_weight_is_omitted_and_remaining_weights_renormalize(audit_factory) -> None:
@@ -85,14 +139,17 @@ set_output_delay 1 [all_outputs]
     assert coverage.grade == "A"
 
 
-def test_unhealthy_static_query_reduces_query_health_but_dynamic_query_is_excluded(audit_factory) -> None:
+def test_unresolved_and_partial_queries_reduce_query_health(audit_factory) -> None:
     static_result = audit_factory("set_input_delay 1 [get_ports absent]")
     dynamic_result = audit_factory("set_input_delay 1 [get_ports $name]")
+    partial_result = audit_factory("set_input_delay 1 [get_ports {data absent}]")
 
     static_query = _components(static_result)["query_health"]
     dynamic_query = _components(dynamic_result)["query_health"]
+    partial_query = _components(partial_result)["query_health"]
     assert (static_query.covered, static_query.total) == (0, 1)
-    assert (dynamic_query.covered, dynamic_query.total) == (0, 0)
+    assert (dynamic_query.covered, dynamic_query.total) == (0, 1)
+    assert (partial_query.covered, partial_query.total) == (0, 1)
 
 
 def test_coverage_grades_hit_each_boundary() -> None:
@@ -129,6 +186,57 @@ def test_graph_has_unique_nodes_and_deterministic_clock_reach_edges(audit_factor
     }
 
 
+def test_graph_exposes_generated_sources_and_ordered_through_metadata(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 [get_ports clk]
+create_generated_clock -name divided -source [get_ports clk] -divide_by 2 [get_pins u_ff/Q]
+set_false_path -rise_through [get_pins u_ff/D] -fall_through [get_pins u_ff/Q] \
+  -to [get_ports result]
+"""
+    )
+    graph = result.modes[0].graph
+
+    assert {node["id"] for node in graph["nodes"]} >= {
+        "source_object:clk",
+        "scope:u_ff/D",
+        "scope:u_ff/Q",
+    }
+    assert {tuple(sorted(edge.items())) for edge in graph["edges"]} >= {
+        tuple(
+            sorted(
+                {
+                    "source": "source_object:clk",
+                    "target": "clock:divided",
+                    "kind": "source",
+                }.items()
+            )
+        ),
+        tuple(
+            sorted(
+                {
+                    "source": "scope:u_ff/D",
+                    "target": "exception:0",
+                    "kind": "through",
+                    "through_index": 0,
+                    "transition": "rise",
+                }.items()
+            )
+        ),
+        tuple(
+            sorted(
+                {
+                    "source": "scope:u_ff/Q",
+                    "target": "exception:0",
+                    "kind": "through",
+                    "through_index": 1,
+                    "transition": "fall",
+                }.items()
+            )
+        ),
+    }
+
+
 def test_json_report_is_byte_deterministic_versioned_and_machine_readable(audit_factory) -> None:
     result = audit_factory(COMPLETE_SDC)
     first = render_json(result)
@@ -137,7 +245,7 @@ def test_json_report_is_byte_deterministic_versioned_and_machine_readable(audit_
 
     assert first == second
     assert first.endswith("\n")
-    assert payload["schema_version"] == "1.0.0"
+    assert payload["schema_version"] == "1.1.0"
     assert payload["tool"]["name"] == "OpenConstraint"
     assert payload["summary"]["coverage"] == {"default": 100.0}
     assert payload["modes"][0]["coverage"]["components"][0]["key"] == "sequential_endpoints"
@@ -177,8 +285,8 @@ def test_nonfinite_clock_waveform_is_not_serialized_as_invalid_json(audit_factor
     rendered = render_json(result)
     payload = json.loads(rendered)
 
-    assert "NaN" not in rendered
     assert payload["modes"][0]["clocks"][0]["waveform"] is None
+    assert any(item["rule_id"] == "OC2005" for item in payload["diagnostics"])
 
 
 def test_text_report_renders_actionable_findings_and_nonapplicable_components(audit_factory) -> None:
@@ -201,6 +309,7 @@ def test_sarif_contains_only_used_rules_valid_locations_and_stable_fingerprints(
     assert first == render_sarif(result)
     assert payload["version"] == "2.1.0"
     assert [rule["id"] for rule in run["tool"]["driver"]["rules"]] == used_ids
+    assert all("precision" not in rule["properties"] for rule in run["tool"]["driver"]["rules"])
     assert {item["ruleId"] for item in run["results"]} == set(used_ids)
     assert all(item["locations"][0]["physicalLocation"]["region"]["startLine"] >= 1 for item in run["results"])
     assert all(len(item["partialFingerprints"]["openconstraint/v1"]) == 20 for item in run["results"])

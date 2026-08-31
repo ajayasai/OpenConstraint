@@ -27,15 +27,26 @@ prioritized through public issues and the governance process.
 - Transparent upstream-static versus coverage-reference evidence for Tcl
   helpers the safe backend deliberately does not execute.
 
-## 0.3 — extension and flow integration
+## 0.3 beta — semantic hardening and adoption controls
 
-- Improve source spans, suppressions with reason and expiry, and diagnostic
-  baselines for adoption in existing designs.
-- Expand regression validation against pinned OpenSTA revisions while keeping
-  Tcl execution explicit and outside the default static backend.
+- Versioned exact-fingerprint diagnostic baselines and expiring waivers with
+  strict stale-control gates and report provenance.
+- Occurrence-level semantic accuracy truth sets with public precision/recall
+  evidence and closed machine-readable schemas.
+- Source-pinned OpenSTA build-and-validation CI while keeping Tcl execution
+  explicit and outside the default static backend.
+- Liberty dependency-arc clock propagation, structural-model fail-closed
+  behavior, and deterministic active I/O-delay replay.
+- Slot-level I/O coverage, unresolved dynamic/partial query obligations, and
+  stricter generated-clock, exception, and clock-group validation.
+
+## 0.4 — extension and flow integration
+
+- Improve source spans and extend adoption controls with organization-level
+  policy composition.
 - Versioned custom-rule interface with deterministic inputs and outputs.
 - Richer clock-domain and exception-relationship visualization.
-- Mode-diff policies and reviewable waivers.
+- Mode-diff policies and broader review workflows around shipped waivers.
 - Reusable GitHub Actions and documented integrations for other CI systems.
 - Performance and memory regression dashboards on public designs.
 

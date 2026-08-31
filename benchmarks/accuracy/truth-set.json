@@ -1,0 +1,643 @@
+{
+  "schema_version": "1.0.0",
+  "suite": {
+    "id": "synthetic-sdc-defects",
+    "name": "Synthetic SDC defect truth set",
+    "description": "Deterministic, reviewable mutations over a small project-authored structural fixture, scored by expected diagnostic rule IDs."
+  },
+  "fixture": {
+    "id": "dual-register-direct-clock",
+    "description": "Two directly clocked flip-flops with fully constrained scalar interfaces and one unrelated spare input.",
+    "top": "accuracy_top",
+    "verilog": "module accuracy_top (\n    input wire clk,\n    input wire scan_clk,\n    input wire reset_n,\n    input wire data_a,\n    input wire data_b,\n    output wire result_a,\n    output wire result_b\n);\n  DFFR u_ff0 (.D(data_a), .CLK(clk), .RN(reset_n), .Q(result_a));\n  DFFR u_ff1 (.D(data_b), .CLK(clk), .RN(reset_n), .Q(result_b));\nendmodule\n",
+    "liberty": "library (accuracy_cells) {\n  cell (DFFR) {\n    ff (IQ, IQN) { clocked_on : \"CLK\"; next_state : \"D\"; }\n    pin (D) { direction : input; }\n    pin (CLK) { direction : input; clock : true; }\n    pin (RN) { direction : input; }\n    pin (Q) { direction : output; }\n  }\n}\n",
+    "sdc": "create_clock -name core_clk -period 10 -waveform {0 5} [get_ports clk]\nset_input_delay 2 -clock core_clk [get_ports {scan_clk reset_n data_a data_b}]\nset_output_delay 2 -clock core_clk [get_ports {result_a result_b}]\n",
+    "license": {
+      "spdx": "Apache-2.0",
+      "provenance": "Project-authored synthetic fixture; no proprietary or third-party design content."
+    }
+  },
+  "options": {
+    "broad_match_count": 50,
+    "broad_match_ratio": 0.8,
+    "broad_match_min_universe": 5,
+    "report_implicit_waveform": true
+  },
+  "thresholds": {
+    "minimum_precision": 1.0,
+    "minimum_recall": 1.0,
+    "maximum_false_pass_rate": 0.0
+  },
+  "cases": [
+    {
+      "id": "clean-control",
+      "description": "The unmodified fixture must remain diagnostic-free.",
+      "execution": "mutant-only",
+      "mutations": [],
+      "expected": []
+    },
+    {
+      "id": "malformed-sdc",
+      "description": "Append an unterminated object-query substitution.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports data_a\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC0001",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "zero-object-query",
+      "description": "Append an exception whose source collection names no design object.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports missing_input] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1001",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "dangerously-broad-query",
+      "description": "Append an exception that selects every port through a wildcard.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports *] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1002",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "dynamic-query",
+      "description": "Append a variable-dependent query that the static backend cannot resolve.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports $dynamic_input] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1003",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "unsupported-query-filter",
+      "description": "Append a query filter outside the deterministic static subset.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports -filter {name == data_a} data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1004",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-clock-period",
+      "description": "Change the primary-clock period from a positive value to zero.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "-period 10",
+          "replacement": "-period 0",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2101",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3002",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3011",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "implicit-clock-waveform",
+      "description": "Remove the explicit primary-clock waveform.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": " -waveform {0 5}",
+          "replacement": "",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2002",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "clock-redefinition",
+      "description": "Append a conflicting second definition of the primary clock.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_clock -name core_clk -period 8 -waveform {0 4} [get_ports clk]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2003",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "multiple-active-clocks",
+      "description": "Append a second named clock on the same propagated source.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_clock -name second_clk -period 8 -waveform {0 4} [get_ports clk]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2004",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-clock-waveform",
+      "description": "Change the primary clock to an odd-length edge list.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "-waveform {0 5}",
+          "replacement": "-waveform {0 5 8}",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2005",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2101",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3002",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3011",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "invalid-clock-definition",
+      "description": "Append a primary clock with neither an explicit name nor a target collection.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_clock -period 10 -waveform {0 5}\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2006",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "generated-clock-source-missing",
+      "description": "Append a generated clock whose source query resolves to nothing.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_generated_clock -name generated_clk -master_clock core_clk -source [get_pins missing/CLK] -divide_by 2 [get_pins u_ff0/Q]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2010",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2011",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "generated-clock-master-invalid",
+      "description": "Append a generated clock whose source is unrelated to its named master.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_generated_clock -name generated_clk -master_clock core_clk -source [get_ports scan_clk] -divide_by 2 [get_pins u_ff0/Q]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2011",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-generated-clock-transform",
+      "description": "Append a generated clock with a non-positive divider, producing both transform and derived-period errors.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_generated_clock -name generated_clk -master_clock core_clk -source [get_ports clk] -divide_by 0 [get_pins u_ff0/Q]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC2012",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "unconstrained-endpoints",
+      "description": "Remove the only clock while retaining complete I/O-delay collections.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "create_clock -name core_clk -period 10 -waveform {0 5} [get_ports clk]\n",
+          "replacement": "",
+          "count": 1
+        },
+        {
+          "kind": "replace",
+          "match": "{scan_clk reset_n data_a data_b}",
+          "replacement": "{clk scan_clk reset_n data_a data_b}",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC2101",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3002",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3011",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "missing-input-delay",
+      "description": "Remove one data input from the input-delay collection.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "scan_clk reset_n data_a data_b",
+          "replacement": "scan_clk reset_n data_a",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "missing-output-delay",
+      "description": "Remove one output from the output-delay collection.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "result_a result_b",
+          "replacement": "result_a",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3002",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "overlapping-exceptions",
+      "description": "Append false-path and multicycle exceptions over the same endpoints.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports data_a] -to [get_ports result_a]\nset_multicycle_path 2 -from [get_ports data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC4001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC4011",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-exception-definition",
+      "description": "Append a false-path exception with no from, through, or to scope.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC4002",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-io-delay",
+      "description": "Replace a numeric input delay with a non-numeric value.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "set_input_delay 2",
+          "replacement": "set_input_delay invalid",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3010",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "io-delay-clock-reference",
+      "description": "Point one input-delay command at an undefined clock.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "set_input_delay 2 -clock core_clk",
+          "replacement": "set_input_delay 2 -clock missing_clk",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3011",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "io-delay-wrong-direction",
+      "description": "Apply an input delay to an output port.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_input_delay 2 -clock core_clk [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3012",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "io-delay-min-max-incomplete",
+      "description": "Constrain input delays for minimum analysis only.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "set_input_delay 2 -clock core_clk",
+          "replacement": "set_input_delay 2 -min -clock core_clk",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3013",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "id": "io-delay-overwritten",
+      "description": "Append a second input delay on the same relationship without -add_delay.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_input_delay 3 -clock core_clk [get_ports data_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3014",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-multicycle",
+      "description": "Append a setup multicycle with a zero multiplier.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_multicycle_path 0 -setup -from [get_ports data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC4010",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "multicycle-setup-hold-pair",
+      "description": "Append a setup multicycle without its matching hold relationship.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_multicycle_path 2 -setup -from [get_ports data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC4011",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "conflicting-multicycles",
+      "description": "Append two different setup multipliers over the same scope.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_multicycle_path 2 -setup -from [get_ports data_a] -to [get_ports result_a]\nset_multicycle_path 3 -setup -from [get_ports data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC4001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC4011",
+          "count": 2
+        },
+        {
+          "rule_id": "OC4012",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "cross-mode-clock-drift",
+      "description": "Compare the reference mode with a mode whose primary-clock period changed.",
+      "execution": "reference-and-mutant",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "-period 10",
+          "replacement": "-period 8",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC5001",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "cross-mode-exception-drift",
+      "description": "Compare the reference mode with a mode containing one additional exception.",
+      "execution": "reference-and-mutant",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports data_a] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC5002",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

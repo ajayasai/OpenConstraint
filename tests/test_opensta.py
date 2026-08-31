@@ -7,10 +7,14 @@ from pathlib import Path
 import pytest
 
 import openconstraint.opensta as opensta
+from openconstraint.cli import _merge_opensta
+from openconstraint.engine import AuditOptions
 from openconstraint.opensta import (
     OpenSTAConfig,
     OpenSTAModeConfig,
+    OpenSTAModeResult,
     OpenSTANotFoundError,
+    OpenSTAValidationResult,
     discover_opensta,
     render_opensta_tcl,
     tcl_quote,
@@ -209,3 +213,43 @@ def test_mode_timeout_is_a_captured_result(tmp_path: Path, monkeypatch: pytest.M
     assert mode.stderr == "partial stderr"
     assert mode.effective_sdc is None
     assert mode.effective_sdc_sha256 is None
+
+
+def test_successful_effective_sdc_is_reaudited_and_new_findings_are_merged(audit_factory, design_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [all_inputs]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    )
+    effective_sdc = "create_clock -name core -period 10 -waveform {0 5} [get_ports clk]\n"
+    mode = OpenSTAModeResult(
+        mode="default",
+        sdc_paths=("constraints.sdc",),
+        version="OpenSTA 3.0.1",
+        command=("sta", "validate.tcl"),
+        stdout="",
+        stderr="",
+        returncode=0,
+        timed_out=False,
+        duration_seconds=0.1,
+        effective_sdc=effective_sdc,
+        effective_sdc_sha256=sha256(effective_sdc.encode()).hexdigest(),
+    )
+    validation = OpenSTAValidationResult(
+        config=OpenSTAConfig("sta", 10, ("top.v",), ("cells.lib",), "top"),
+        version="OpenSTA 3.0.1",
+        modes=(mode,),
+    )
+
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    ids = {finding.rule_id for finding in result.diagnostics}
+    effective = result.summary["opensta"]["modes"][0]["effective_audit"]
+    assert {"OC3001", "OC3002"} <= ids
+    assert effective["diagnostic_count"] >= 2
+    assert effective["added_diagnostic_count"] >= 2
+    assert not effective["semantic_match"]
+    assert len(effective["static_semantic_sha256"]) == 64
+    assert len(effective["effective_semantic_sha256"]) == 64

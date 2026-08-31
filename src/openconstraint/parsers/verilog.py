@@ -367,6 +367,7 @@ def parse_verilog_text(text: str) -> VerilogDesign:
                     warnings.append(f"ignored non-scalar assign in module {name}: {statement.strip()[:80]}")
                 continue
             if re.match(r"\s*(?:always|initial|parameter|localparam|genvar)\b", statement):
+                warnings.append(f"ignored unsupported statement in module {name}: {statement.strip()[:80]}")
                 continue
             instance = _parse_instance(statement, warnings)
             if instance:
@@ -445,6 +446,9 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
     warnings = list(verilog.warnings) + list(library.warnings)
     drivers: dict[str, set[str]] = {}
     loads: dict[str, set[str]] = {}
+    combinational_arcs: dict[str, set[str]] = {}
+    inferred_cell_types: set[str] = set()
+    incomplete_arc_cell_types: set[str] = set()
     elaboration_remaining = MAX_ELABORATION_OBJECTS
     elaboration_limit_reported = False
 
@@ -548,7 +552,10 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
                 continue
 
             connection_names = set(child.named_connections)
-            spec = library.cells.get(child.cell_type) or _inferred_spec(child.cell_type, connection_names)
+            spec = library.cells.get(child.cell_type)
+            if spec is None:
+                inferred_cell_types.add(child.cell_type)
+                spec = _inferred_spec(child.cell_type, connection_names)
             child_pins: dict[str, Pin] = {}
             if child.named_connections:
                 connection_items = list(child.named_connections.items())
@@ -576,10 +583,44 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
                     target = drivers if direction == "output" else loads
                     target.setdefault(resolved_net, set()).add(pin_path)
             instances[child_path] = Instance(child_path, child.cell_type, child_pins, spec.sequential)
+            if not spec.sequential:
+                connected_inputs = {
+                    name
+                    for name, pin in child_pins.items()
+                    if pin.direction in {"input", "inout"} and pin.net is not None
+                }
+                connected_outputs = {
+                    name
+                    for name, pin in child_pins.items()
+                    if pin.direction in {"output", "inout"} and pin.net is not None
+                }
+                for output_name in connected_outputs:
+                    dependencies = spec.combinational_dependencies.get(output_name)
+                    if dependencies is None:
+                        if connected_inputs:
+                            incomplete_arc_cell_types.add(child.cell_type)
+                        continue
+                    output_path = child_pins[output_name].path
+                    for input_name in dependencies & connected_inputs:
+                        input_path = child_pins[input_name].path
+                        combinational_arcs.setdefault(input_path, set()).add(output_path)
 
     top_bindings = {port.name: port.name for port in top_module.ports}
     visit(top_module, "", top_bindings, ())
+    if inferred_cell_types:
+        sample = sorted(inferred_cell_types)[:20]
+        warnings.append(
+            f"Liberty metadata is missing for {len(inferred_cell_types)} instantiated cell type(s); "
+            f"inferred sequential and pin roles from names (sample: {', '.join(sample)})"
+        )
+    if incomplete_arc_cell_types:
+        sample = sorted(incomplete_arc_cell_types)[:20]
+        warnings.append(
+            f"Liberty function/timing dependencies are missing for {len(incomplete_arc_cell_types)} "
+            f"instantiated combinational cell type(s); clock propagation stops at unknown arcs "
+            f"(sample: {', '.join(sample)})"
+        )
     for port in ports.values():
         target = drivers if port.direction in {"input", "inout"} else loads
         target.setdefault(port.net, set()).add(port.name)
-    return Design(selected_top, ports, nets, instances, pins, drivers, loads, warnings)
+    return Design(selected_top, ports, nets, instances, pins, drivers, loads, combinational_arcs, warnings)

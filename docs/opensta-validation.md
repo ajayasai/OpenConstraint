@@ -39,6 +39,22 @@ captures stdout/stderr, return status, duration, timeout state, executable
 version, and SHA-256 of the effective SDC. Temporary scripts and effective SDC
 files are removed after the mode result is captured.
 
+For a successful mode, the in-memory effective SDC is then audited by the same
+non-executing static rule pipeline used for input SDC. This can expose issues in
+objects or constraints produced after OpenSTA evaluates trusted Tcl. A finding
+whose rule, message, and evidence are not already present is merged into the
+active mode and top-level diagnostics with an `<opensta-effective:MODE>` source
+location.
+
+The report's per-mode `effective_audit` object records effective coverage,
+total and newly merged diagnostic counts, normalized static/effective semantic
+SHA-256 values, and `semantic_match`. That comparison covers modeled clocks,
+exceptions, canonical active I/O-delay state, and coverage. Raw I/O-delay
+command history remains in the normal report and is not hashed as active state.
+The original static mode remains the primary model; its clocks, exceptions, and
+coverage are not replaced, and cross-mode rules are not rerun over effective
+snapshots.
+
 ## Failure semantics
 
 A timeout, nonzero return, unsuccessful `check_setup`, or missing effective SDC
@@ -61,6 +77,15 @@ result data and may be confidential.
 
 Successful validation means that the installed OpenSTA version loaded the
 supplied design/constraints, passed the adapter's `check_setup` condition, and
-wrote an effective SDC. It does not calculate or certify path timing through
+wrote an effective SDC. `semantic_match` means only that the two snapshots are
+equal under OpenConstraint's documented static subset. The effective SDC can
+still contain syntax or semantics outside that subset. Exception and active
+I/O-delay records are canonically ordered, so representational list order alone
+does not cause a mismatch; command order still matters when it changes active
+overwrite, merge, or reset semantics.
+A clock redefinition's object-generation effects and `unset_input_delay` /
+`unset_output_delay` are not in the active I/O replay subset.
+A mismatch is a review signal rather than proof that either representation is
+wrong. Validation does not calculate or certify path timing through
 OpenConstraint, formally prove exceptions, or establish equivalence with a
 commercial sign-off flow.

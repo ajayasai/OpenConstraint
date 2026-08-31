@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from openconstraint.model import SourceLocation
@@ -22,6 +22,8 @@ QUERY_KINDS = {
     "all_registers": "registers",
 }
 
+_TCL_VARIABLE = re.compile(r"(?<!\\)\$(?:[A-Za-z_:][A-Za-z0-9_:]*|\{[^}]+\})")
+
 FLAG_OPTIONS = {
     "-add",
     "-hierarchical",
@@ -30,6 +32,8 @@ FLAG_OPTIONS = {
     "-quiet",
     "-rise",
     "-fall",
+    "-min",
+    "-max",
     "-setup",
     "-hold",
     "-start",
@@ -44,6 +48,11 @@ FLAG_OPTIONS = {
     "-logically_exclusive",
     "-physically_exclusive",
     "-allow_paths",
+    "-add_delay",
+    "-reset_path",
+    "-invert",
+    "-probe",
+    "-ignore_clock_latency",
 }
 
 
@@ -57,13 +66,17 @@ class Selector:
     regexp: bool = False
     nocase: bool = False
     filter_expression: str | None = None
+    of_objects: Selector | None = None
+    of_objects_raw: str | None = None
     dynamic: bool = False
+    option: str | None = None
 
 
 @dataclass(slots=True)
 class ParsedCommand:
     tcl: TclCommand
     options: dict[str, list[str]] = field(default_factory=dict)
+    option_occurrences: list[tuple[str, str]] = field(default_factory=list)
     positionals: list[str] = field(default_factory=list)
     selectors: list[Selector] = field(default_factory=list)
 
@@ -109,6 +122,8 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
     regexp = False
     nocase = False
     filter_expression: str | None = None
+    of_objects: Selector | None = None
+    of_objects_raw: str | None = None
     patterns: list[str] = []
     index = 0
     while index < len(words):
@@ -123,6 +138,9 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
             index += 1
             if value == "-filter":
                 filter_expression = unquote(words[index])
+            else:
+                of_objects_raw = words[index]
+                of_objects = _parse_selector(words[index], location)
         elif value in ("-quiet",):
             pass
         else:
@@ -130,9 +148,16 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
             if unpacked:
                 patterns.extend(item for item in split_words(unpacked) if item)
         index += 1
-    if command_name in {"all_inputs", "all_outputs", "all_clocks", "all_registers"} and not patterns:
+    if not patterns and of_objects_raw is None:
         patterns = ["*"]
-    dynamic = any("$" in item or re.search(r"\[[A-Za-z_][A-Za-z0-9_]*\s", item) for item in patterns)
+    # OpenSTA ignores positional patterns when -of_objects is present.  Those
+    # ignored words must therefore not make an otherwise static selector look
+    # Tcl-dynamic.  A dynamic nested source still makes the whole query
+    # dynamic, because that collection determines the result.
+    if of_objects_raw is not None:
+        dynamic = of_objects is None or of_objects.dynamic
+    else:
+        dynamic = any(_TCL_VARIABLE.search(item) or re.search(r"\[[A-Za-z_][A-Za-z0-9_]*\s", item) for item in patterns)
     return Selector(
         kind=kind,
         patterns=tuple(patterns),
@@ -142,6 +167,8 @@ def _parse_selector(word: str, location: SourceLocation) -> Selector | None:
         regexp=regexp,
         nocase=nocase,
         filter_expression=filter_expression,
+        of_objects=of_objects,
+        of_objects_raw=of_objects_raw,
         dynamic=dynamic,
     )
 
@@ -155,18 +182,21 @@ def _parse_command(command: TclCommand) -> ParsedCommand:
         selector = _parse_selector(word, command.location)
         if selector:
             parsed.selectors.append(selector)
-        if word.startswith("-"):
+        if len(word) >= 2 and word[0] == "-" and word[1].isalpha():
             if word in FLAG_OPTIONS:
                 parsed.options.setdefault(word, []).append("true")
+                parsed.option_occurrences.append((word, "true"))
             elif index + 1 < len(words):
                 index += 1
                 value = words[index]
                 parsed.options.setdefault(word, []).append(value)
+                parsed.option_occurrences.append((word, value))
                 nested = _parse_selector(value, command.location)
                 if nested:
-                    parsed.selectors.append(nested)
+                    parsed.selectors.append(replace(nested, option=word))
             else:
                 parsed.options.setdefault(word, []).append("")
+                parsed.option_occurrences.append((word, ""))
         else:
             parsed.positionals.append(word)
         index += 1

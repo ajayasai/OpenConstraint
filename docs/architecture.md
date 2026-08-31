@@ -16,6 +16,10 @@ SDC files ──────> non-executing Tcl lexer ─> SDC command/query mod
                   diagnostics    coverage      graph data
                        └────────────┼──────────────┘
                                     v
+                    optional adoption-control policy
+                    ├─> active diagnostics for gates
+                    └─> reviewable dispositions + provenance
+                                    v
                           text / JSON / SARIF / HTML
 ```
 
@@ -23,7 +27,11 @@ An explicit optional branch runs after the static audit:
 
 ```text
 --opensta ─> one separate trusted-input OpenSTA process per mode
-          └> check_setup + effective-SDC provenance + OC6001
+          └> check_setup + effective-SDC capture
+                         ├─> failure ─> OC6001
+                         └─> success ─> same static audit pipeline
+                                        ├─> unique diagnostics merged
+                                        └─> effective coverage + semantic digests
 ```
 
 ## Input layers
@@ -33,25 +41,44 @@ brackets, comments, continuations, and source locations. It does not evaluate
 the tokens. The SDC layer recognizes supported command and object-query shapes.
 
 The Liberty reader extracts leaf-cell pin direction, sequential groups, data
-pins, and clock pins. The Verilog reader builds module hierarchy, leaf
-instances, pins, nets, drivers, and loads. This is a structural index, not a
-full simulator or elaborator.
+pins, clock pins, and declared combinational dependencies from output
+`function` and timing `related_pin` metadata. The Verilog reader builds module
+hierarchy, leaf instances, pins, nets, drivers, loads, and instance-level
+input/output arcs. This is a structural index, not a full simulator or
+elaborator.
 
 ## Audit engine
 
 Each named mode is analyzed independently:
 
 1. Read its SDC documents in the supplied order.
-2. Build primary and generated clock records.
-3. Resolve supported object queries against the design index.
-4. Propagate clocks structurally through modeled combinational leaf cells.
-5. Collect I/O delays and exception scopes.
-6. Run query, clock, exception, endpoint, and I/O checks.
+2. Build primary and generated clock records, including waveform and transform
+   validation.
+3. Resolve supported object queries, including static `-of_objects`
+   connectivity, against the design index.
+4. Propagate clocks only through declared Liberty input/output dependencies;
+   stop and invalidate incomplete structural models rather than assuming
+   all-input-to-all-output connectivity.
+5. Normalize I/O delay value/clock/direction/min-max/additive semantics and
+   edge-qualified, ordered exception scopes.
+6. Run query, clock, generated-clock, exception, multicycle, endpoint, and I/O
+   checks.
 7. Compute per-component structural coverage and graph data.
 
 After every mode is complete, cross-mode rules compare clock definitions and
 exception signatures. Findings have stable IDs, source locations, rationales,
 remediation text, evidence objects, mode names, and deterministic fingerprints.
+
+## Adoption-control layer
+
+Diagnostic baselines and waivers are applied after the static audit and any
+explicit OpenSTA result is merged, but before rendering and quality-policy exit
+evaluation. This keeps rule generation independent from organizational policy.
+The layer validates versioned control JSON, matches only exact fingerprints,
+removes matches from active top-level and per-mode diagnostic arrays, and adds
+complete disposition plus source-digest provenance to `summary.adoption`.
+Coverage is not recalculated or waived. See
+[adoption controls](adoption-controls.md).
 
 ## Optional OpenSTA adapter
 
@@ -62,7 +89,14 @@ links the top, executes that mode's SDC files, runs `check_setup -verbose`, and
 writes a timestamp-free effective SDC. OpenConstraint launches an argument
 vector with `shell=False`, captures stdout/stderr, applies the configured
 timeout, hashes the effective SDC with SHA-256, and deletes the temporary
-directory. OpenSTA is not imported, linked, or redistributed.
+directory. On success, the in-memory effective SDC is passed through the same
+non-executing static audit. Diagnostics not already present by normalized rule,
+message, and evidence are merged into the mode; the report also records the
+effective audit's coverage and diagnostic count plus SHA-256 digests of modeled
+static/effective clocks, exceptions, canonical active I/O-delay state, and
+coverage. The effective model does not replace the original mode, and
+cross-mode findings are not recomputed from it.
+OpenSTA is not imported, linked, or redistributed.
 
 ## Determinism
 

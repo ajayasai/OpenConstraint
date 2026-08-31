@@ -76,7 +76,8 @@ counted as missing.
 
 A clean report means no implemented static rule fired for the modeled subset.
 It does not mean that every SDC construct was understood or that timing intent
-is correct. Review `OC1003`, `OC1004`, parser warnings, and the
+is correct. `OC0002` prevents parser/elaboration warnings from being treated as
+a clean structural model; also review `OC1003`, `OC1004`, and the
 [compatibility document](compatibility.md).
 
 ## Optional trusted OpenSTA validation

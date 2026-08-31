@@ -13,13 +13,27 @@
       "evidence": {
         "clock": "core_clk",
         "definitions": {
-          "functional": [
-            10.0,
-            [
+          "functional": {
+            "combinational": false,
+            "divide_by": null,
+            "duty_cycle": null,
+            "edge_shift": null,
+            "edges": null,
+            "generated": false,
+            "invert": false,
+            "master_clock": null,
+            "multiply_by": null,
+            "period": 10.0,
+            "source_targets": [],
+            "targets": [
               "clk"
             ],
-            false
-          ]
+            "waveform": [
+              0.0,
+              5.0
+            ],
+            "waveform_explicit": true
+          }
         },
         "missing_modes": [
           "scan"
@@ -33,7 +47,7 @@
       },
       "message": "Clock 'core_clk' differs across constraint modes",
       "mode": "cross-mode",
-      "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons.",
+      "rationale": "Mode-specific clocks are common, but unintended target, waveform, source, or transform drift can invalidate comparisons.",
       "rule_id": "OC5001",
       "severity": "note",
       "suggestion": "Review the per-mode definitions and record intentional differences in version control."
@@ -42,13 +56,27 @@
       "evidence": {
         "clock": "scan_clk",
         "definitions": {
-          "scan": [
-            50.0,
-            [
+          "scan": {
+            "combinational": false,
+            "divide_by": null,
+            "duty_cycle": null,
+            "edge_shift": null,
+            "edges": null,
+            "generated": false,
+            "invert": false,
+            "master_clock": null,
+            "multiply_by": null,
+            "period": 50.0,
+            "source_targets": [],
+            "targets": [
               "scan_clk"
             ],
-            false
-          ]
+            "waveform": [
+              0.0,
+              25.0
+            ],
+            "waveform_explicit": true
+          }
         },
         "missing_modes": [
           "functional"
@@ -62,7 +90,7 @@
       },
       "message": "Clock 'scan_clk' differs across constraint modes",
       "mode": "cross-mode",
-      "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons.",
+      "rationale": "Mode-specific clocks are common, but unintended target, waveform, source, or transform drift can invalidate comparisons.",
       "rule_id": "OC5001",
       "severity": "note",
       "suggestion": "Review the per-mode definitions and record intentional differences in version control."
@@ -72,13 +100,20 @@
     {
       "clocks": [
         {
+          "combinational": false,
+          "divide_by": null,
+          "duty_cycle": null,
+          "edge_shift": null,
+          "edges": null,
           "generated": false,
+          "invert": false,
           "location": {
             "column": 1,
             "line": 1,
             "path": "examples/tiny/functional.sdc"
           },
           "master_clock": null,
+          "multiply_by": null,
           "name": "core_clk",
           "period": 10.0,
           "source_targets": [],
@@ -88,7 +123,8 @@
           "waveform": [
             0.0,
             5.0
-          ]
+          ],
+          "waveform_explicit": true
         }
       ],
       "coverage": {
@@ -103,26 +139,26 @@
             "weight": 0.5
           },
           {
-            "covered": 5,
-            "explanation": "Non-clock input/inout ports matched by at least one set_input_delay.",
+            "covered": 20,
+            "explanation": "Min/max by rise/fall slots covered for each required input port and I/O relationship.",
             "key": "input_delays",
             "label": "Input-delay coverage",
             "percentage": 100.0,
-            "total": 5,
+            "total": 20,
             "weight": 0.2
           },
           {
-            "covered": 2,
-            "explanation": "Output/inout ports matched by at least one set_output_delay.",
+            "covered": 8,
+            "explanation": "Min/max by rise/fall slots covered for each required output port and I/O relationship.",
             "key": "output_delays",
             "label": "Output-delay coverage",
             "percentage": 100.0,
-            "total": 2,
+            "total": 8,
             "weight": 0.2
           },
           {
             "covered": 3,
-            "explanation": "Static SDC object queries that resolve to at least one design object.",
+            "explanation": "All parsed SDC object queries that resolve completely to at least one design object.",
             "key": "query_health",
             "label": "Resolvable object queries",
             "percentage": 100.0,
@@ -176,18 +212,92 @@
           }
         ]
       },
+      "io_delays": [
+        {
+          "additive": false,
+          "clock_edge": "rise",
+          "clocks": [
+            "core_clk"
+          ],
+          "kind": "input",
+          "location": {
+            "column": 1,
+            "line": 2,
+            "path": "examples/tiny/functional.sdc"
+          },
+          "min_max": [
+            "max",
+            "min"
+          ],
+          "network_latency_included": false,
+          "ports": [
+            "din[0]",
+            "din[1]",
+            "rst_n",
+            "scan_clk",
+            "scan_en"
+          ],
+          "raw": "set_input_delay  -clock core_clk 2.0 [get_ports {scan_clk rst_n scan_en din[0] din[1]}]",
+          "reference_pin": null,
+          "source_latency_included": false,
+          "transitions": [
+            "fall",
+            "rise"
+          ],
+          "valid": true,
+          "value": 2.0
+        },
+        {
+          "additive": false,
+          "clock_edge": "rise",
+          "clocks": [
+            "core_clk"
+          ],
+          "kind": "output",
+          "location": {
+            "column": 1,
+            "line": 3,
+            "path": "examples/tiny/functional.sdc"
+          },
+          "min_max": [
+            "max",
+            "min"
+          ],
+          "network_latency_included": false,
+          "ports": [
+            "dout[0]",
+            "dout[1]"
+          ],
+          "raw": "set_output_delay -clock core_clk 2.0 [get_ports {dout[0] dout[1]}]",
+          "reference_pin": null,
+          "source_latency_included": false,
+          "transitions": [
+            "fall",
+            "rise"
+          ],
+          "valid": true,
+          "value": 2.0
+        }
+      ],
       "name": "functional"
     },
     {
       "clocks": [
         {
+          "combinational": false,
+          "divide_by": null,
+          "duty_cycle": null,
+          "edge_shift": null,
+          "edges": null,
           "generated": false,
+          "invert": false,
           "location": {
             "column": 1,
             "line": 1,
             "path": "examples/tiny/scan.sdc"
           },
           "master_clock": null,
+          "multiply_by": null,
           "name": "scan_clk",
           "period": 50.0,
           "source_targets": [],
@@ -197,7 +307,8 @@
           "waveform": [
             0.0,
             25.0
-          ]
+          ],
+          "waveform_explicit": true
         }
       ],
       "coverage": {
@@ -212,26 +323,26 @@
             "weight": 0.5
           },
           {
-            "covered": 5,
-            "explanation": "Non-clock input/inout ports matched by at least one set_input_delay.",
+            "covered": 20,
+            "explanation": "Min/max by rise/fall slots covered for each required input port and I/O relationship.",
             "key": "input_delays",
             "label": "Input-delay coverage",
             "percentage": 100.0,
-            "total": 5,
+            "total": 20,
             "weight": 0.2
           },
           {
-            "covered": 2,
-            "explanation": "Output/inout ports matched by at least one set_output_delay.",
+            "covered": 8,
+            "explanation": "Min/max by rise/fall slots covered for each required output port and I/O relationship.",
             "key": "output_delays",
             "label": "Output-delay coverage",
             "percentage": 100.0,
-            "total": 2,
+            "total": 8,
             "weight": 0.2
           },
           {
             "covered": 3,
-            "explanation": "Static SDC object queries that resolve to at least one design object.",
+            "explanation": "All parsed SDC object queries that resolve completely to at least one design object.",
             "key": "query_health",
             "label": "Resolvable object queries",
             "percentage": 100.0,
@@ -285,10 +396,77 @@
           }
         ]
       },
+      "io_delays": [
+        {
+          "additive": false,
+          "clock_edge": "rise",
+          "clocks": [
+            "scan_clk"
+          ],
+          "kind": "input",
+          "location": {
+            "column": 1,
+            "line": 2,
+            "path": "examples/tiny/scan.sdc"
+          },
+          "min_max": [
+            "max",
+            "min"
+          ],
+          "network_latency_included": false,
+          "ports": [
+            "clk",
+            "din[0]",
+            "din[1]",
+            "rst_n",
+            "scan_en"
+          ],
+          "raw": "set_input_delay  -clock scan_clk 5.0 [get_ports {clk rst_n scan_en din[0] din[1]}]",
+          "reference_pin": null,
+          "source_latency_included": false,
+          "transitions": [
+            "fall",
+            "rise"
+          ],
+          "valid": true,
+          "value": 5.0
+        },
+        {
+          "additive": false,
+          "clock_edge": "rise",
+          "clocks": [
+            "scan_clk"
+          ],
+          "kind": "output",
+          "location": {
+            "column": 1,
+            "line": 3,
+            "path": "examples/tiny/scan.sdc"
+          },
+          "min_max": [
+            "max",
+            "min"
+          ],
+          "network_latency_included": false,
+          "ports": [
+            "dout[0]",
+            "dout[1]"
+          ],
+          "raw": "set_output_delay -clock scan_clk 5.0 [get_ports {dout[0] dout[1]}]",
+          "reference_pin": null,
+          "source_latency_included": false,
+          "transitions": [
+            "fall",
+            "rise"
+          ],
+          "valid": true,
+          "value": 5.0
+        }
+      ],
       "name": "scan"
     }
   ],
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "summary": {
     "coverage": {
       "functional": 100.0,
@@ -302,6 +480,6 @@
   },
   "tool": {
     "name": "OpenConstraint",
-    "version": "0.2.0b0"
+    "version": "0.3.0b0"
   }
 }

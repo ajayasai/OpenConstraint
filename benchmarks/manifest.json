@@ -8,18 +8,18 @@
   "suite_files": [
     {
       "path": "overlays/aes-coverage-reference.sdc",
-      "sha256": "5d9f13c922825ebbf076d62edc8a8b96aff4308e45d62adc08961fcc36cf8753",
-      "size_bytes": 370
+      "sha256": "4a4f049f737b639b1dd75113fa9c9416a7434595990e6c5eaa3c1f35fc613ddd",
+      "size_bytes": 403
     },
     {
       "path": "overlays/ibex-coverage-reference.sdc",
-      "sha256": "de977d293cea0b0a73de78d0aafb2f9ae62c1014f3a707026b518b5271b4f28d",
-      "size_bytes": 391
+      "sha256": "b2a1125267648f4b52d6edd91a21c54776789708bbcd636a7fcbb5731648b3a1",
+      "size_bytes": 649
     },
     {
       "path": "overlays/jpeg-coverage-reference.sdc",
-      "sha256": "e2b1525ca531b6190c8a18b2fc6aa6c5e16df31851e3feab6b02ba0da9c062e3",
-      "size_bytes": 366
+      "sha256": "68c15920661e61e6749421d9aee6db1358ef7c1be44b8b7f225ad9b7d490de15",
+      "size_bytes": 406
     }
   ],
   "datasets": [

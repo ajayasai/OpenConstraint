@@ -42,7 +42,7 @@ jobs:
       - name: Install the protected beta release
         run: >-
           python -m pip install
-          https://github.com/ajayasai/OpenConstraint/releases/download/v0.2.0-beta/openconstraint-0.2.0b0-py3-none-any.whl
+          https://github.com/ajayasai/OpenConstraint/releases/download/v0.3.0-beta/openconstraint-0.3.0b0-py3-none-any.whl
       - name: Audit constraints
         id: constraint-audit
         continue-on-error: true
@@ -97,5 +97,13 @@ time with `openconstraint schema`.
 
 Start by running `--fail-on never`, reviewing rule evidence and component
 denominators. Then gate errors, establish an evidence-backed coverage threshold,
-and finally consider warnings. v0.2 does not yet provide native suppressions or
-waiver expiry; avoid hiding findings with log filtering.
+and finally consider warnings. Existing designs can commit a reviewed
+`--baseline`; intentional exceptions belong in exact-fingerprint `--waivers`
+with a reason and optional expiry. Use `--strict-controls` to fail stale
+baseline entries and unused waivers. See
+[adoption controls](adoption-controls.md) instead of filtering report logs.
+
+The default `--fail-on error` gate includes `OC0002`. A parser or elaboration
+warning therefore fails the audit even when the partial structural model would
+otherwise receive high coverage. The complete warning list remains in
+`design.parser_warnings`; diagnostic evidence contains a bounded sample.

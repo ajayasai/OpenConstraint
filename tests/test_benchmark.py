@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+import openconstraint.benchmark as benchmark_module
 from openconstraint.benchmark import (
     BASELINE_SCHEMA_VERSION,
     BenchmarkError,
@@ -131,6 +132,66 @@ def test_manifest_digest_is_canonical_and_records_provenance(tmp_path: Path) -> 
     assert artifact.license.spdx == "Apache-2.0"
 
 
+def test_json_loaders_reject_duplicate_keys(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "duplicate-manifest.json"
+    manifest_path.write_text(
+        '{"schema_version":"1.0.0","schema_version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BenchmarkError, match="duplicate JSON key 'schema_version'"):
+        load_manifest(manifest_path)
+
+    valid_manifest_path, cache, _ = _fixture(tmp_path)
+    manifest = load_manifest(valid_manifest_path)
+    baseline = baseline_from_result(run_suite(manifest, cache, offline=True))
+    rendered = render_benchmark_json(baseline)
+    duplicate_baseline = tmp_path / "duplicate-baseline.json"
+    duplicate_baseline.write_text(
+        rendered.replace('"schema_version": "1.0.0"', '"schema_version": "1.0.0",\n  "schema_version": "1.0.0"', 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BenchmarkError, match="duplicate JSON key 'schema_version'"):
+        load_baseline(duplicate_baseline, manifest)
+
+
+def test_json_loader_bounds_size_and_nesting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    oversized = tmp_path / "oversized.json"
+    oversized.write_text('{"padding":"0123456789"}', encoding="utf-8")
+    monkeypatch.setattr(benchmark_module, "_MAX_JSON_BYTES", 8)
+    with pytest.raises(BenchmarkError, match="JSON size limit"):
+        load_manifest(oversized)
+
+    monkeypatch.setattr(benchmark_module, "_MAX_JSON_BYTES", 64 * 1024 * 1024)
+    nested = tmp_path / "nested.json"
+    nested.write_text("[" * 300 + "0" + "]" * 300, encoding="utf-8")
+    with pytest.raises(BenchmarkError, match="JSON nesting limit"):
+        load_manifest(nested)
+
+
+def test_cli_reports_deep_benchmark_json_as_input_error(tmp_path: Path, capsys) -> None:
+    nested = tmp_path / "nested.json"
+    nested.write_text("[" * 300 + "0" + "]" * 300, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(nested),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+            ]
+        )
+
+    assert exit_info.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "input error" in stderr
+    assert "JSON nesting limit" in stderr
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -200,6 +261,11 @@ def test_offline_acquisition_verifies_extracts_and_reuses_cache(tmp_path: Path) 
 
     marker = root.parent / ".openconstraint-artifact.json"
     marker.write_text("{}", encoding="utf-8")
+    repaired = acquire_artifact(artifact, cache, offline=True)
+    assert (repaired / "design.v").is_file()
+
+    marker = repaired.parent / ".openconstraint-artifact.json"
+    marker.write_text("[" * 300 + "0" + "]" * 300, encoding="utf-8")
     repaired = acquire_artifact(artifact, cache, offline=True)
     assert (repaired / "design.v").is_file()
 
@@ -419,24 +485,62 @@ def test_fetch_and_run_emit_machine_readable_metrics(tmp_path: Path) -> None:
     assert case["status"] == "passed"
     assert case["baseline_status"] == "not_checked"
     semantic = case["semantic"]
-    assert semantic["design"]["inventory_sha256"] == "77cd6b910b2d7296264197cfa5993fe29e0d2f37e7ab48ee56a9d821cc7722d7"
+    assert semantic["design"]["inventory_sha256"] == "16f544bfc2dad2d22947a992fcd9d9dd094487ee9b74f35ca1314b746ce24b4e"
     assert semantic["modes"]["functional"]["clocks"] == [
         {
             "name": "core",
             "targets": ["clk"],
             "period": 10.0,
             "waveform": [0.0, 5.0],
+            "waveform_explicit": True,
             "generated": False,
             "source_targets": [],
             "master_clock": None,
+            "divide_by": None,
+            "multiply_by": None,
+            "duty_cycle": None,
+            "invert": False,
+            "combinational": False,
+            "edges": None,
+            "edge_shift": None,
         }
+    ]
+    assert semantic["modes"]["functional"]["io_delays"] == [
+        {
+            "kind": "input",
+            "ports": ["clk2", "data", "spare"],
+            "value": 1.0,
+            "clocks": ["core"],
+            "reference_pin": None,
+            "source_latency_included": False,
+            "network_latency_included": False,
+            "min_max": ["max", "min"],
+            "transitions": ["fall", "rise"],
+            "clock_edge": "rise",
+            "additive": False,
+            "valid": True,
+        },
+        {
+            "kind": "output",
+            "ports": ["result"],
+            "value": 2.0,
+            "clocks": ["core"],
+            "reference_pin": None,
+            "source_latency_included": False,
+            "network_latency_included": False,
+            "min_max": ["max", "min"],
+            "transitions": ["fall", "rise"],
+            "clock_edge": "rise",
+            "additive": False,
+            "valid": True,
+        },
     ]
     assert semantic["modes"]["functional"]["coverage"] == {
         "score": 100.0,
         "grade": "A",
         "components": {
-            "input_delays": {"covered": 3, "total": 3, "percentage": 100.0, "weight": 0.2},
-            "output_delays": {"covered": 1, "total": 1, "percentage": 100.0, "weight": 0.2},
+            "input_delays": {"covered": 12, "total": 12, "percentage": 100.0, "weight": 0.2},
+            "output_delays": {"covered": 4, "total": 4, "percentage": 100.0, "weight": 0.2},
             "query_health": {"covered": 3, "total": 3, "percentage": 100.0, "weight": 0.1},
             "sequential_endpoints": {"covered": 1, "total": 1, "percentage": 100.0, "weight": 0.5},
         },
@@ -444,6 +548,54 @@ def test_fetch_and_run_emit_machine_readable_metrics(tmp_path: Path) -> None:
     assert case["analysis_duration_seconds"] >= 0
     assert case["peak_python_bytes"] > 0
     assert json.loads(render_benchmark_json(result))["manifest_sha256"] == manifest.digest
+
+
+def test_semantic_snapshot_normalizes_latency_flags_ignored_with_reference_pin(tmp_path: Path) -> None:
+    manifest_path, cache, _ = _fixture(
+        tmp_path,
+        sdc="""
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay 1 -clock core -reference_pin [get_pins u_ff/Q] \
+  -source_latency_included -network_latency_included [get_ports data]
+""",
+    )
+
+    result = run_suite(load_manifest(manifest_path), cache, offline=True)
+    io_delay = result["cases"][0]["semantic"]["modes"]["functional"]["io_delays"][0]
+
+    assert io_delay["reference_pin"] == "u_ff/Q"
+    assert io_delay["source_latency_included"] is False
+    assert io_delay["network_latency_included"] is False
+
+
+def test_semantic_snapshot_projects_active_io_delay_state(tmp_path: Path) -> None:
+    manifest_path, cache, _ = _fixture(
+        tmp_path,
+        sdc="""
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay -max -rise 1 -clock core [get_ports data]
+set_input_delay -max -rise 2 -clock core [get_ports data]
+""",
+    )
+
+    result = run_suite(load_manifest(manifest_path), cache, offline=True)
+
+    assert result["cases"][0]["semantic"]["modes"]["functional"]["io_delays"] == [
+        {
+            "kind": "input",
+            "ports": ["data"],
+            "value": 2.0,
+            "clocks": ["core"],
+            "reference_pin": None,
+            "source_latency_included": False,
+            "network_latency_included": False,
+            "min_max": ["max"],
+            "transitions": ["rise"],
+            "clock_edge": "rise",
+            "additive": False,
+            "valid": True,
+        }
+    ]
 
 
 def test_semantic_baseline_matches_and_detects_regression(tmp_path: Path) -> None:
@@ -513,8 +665,46 @@ set_multicycle_path 2 -from [get_cells u_ff] -to [get_ports result]
     functional = semantic["modes"]["functional"]
 
     assert functional["exceptions"] == [
-        {"kind": "false_path", "from": ["u_ff"], "to": ["result"], "through": []},
-        {"kind": "multicycle_path", "from": ["u_ff"], "to": ["result"], "through": []},
+        {
+            "kind": "false_path",
+            "from": ["u_ff"],
+            "to": ["result"],
+            "through": [],
+            "qualifiers": {
+                "from_transition": "rise_fall",
+                "to_transition": "rise_fall",
+                "end_transition": "rise_fall",
+                "through_transitions": [],
+                "from_specified": True,
+                "to_specified": True,
+                "scope_resolvable": True,
+                "definition_valid": True,
+                "definition_problems": [],
+                "reset_path": False,
+                "applies_to": ["hold", "setup"],
+            },
+        },
+        {
+            "kind": "multicycle_path",
+            "from": ["u_ff"],
+            "to": ["result"],
+            "through": [],
+            "qualifiers": {
+                "from_transition": "rise_fall",
+                "to_transition": "rise_fall",
+                "end_transition": "rise_fall",
+                "through_transitions": [],
+                "from_specified": True,
+                "to_specified": True,
+                "scope_resolvable": True,
+                "definition_valid": True,
+                "definition_problems": [],
+                "multiplier": 2,
+                "applies_to": ["hold", "setup"],
+                "start_end": "default",
+                "reset_path": False,
+            },
+        },
     ]
     overlap = next(item for item in semantic["diagnostics"]["findings"] if item["rule_id"] == "OC4001")
     assert overlap == {
@@ -659,6 +849,27 @@ def test_cli_fetch_baseline_and_regression_gate_are_offline_reproducible(tmp_pat
     assert json.loads(capsys.readouterr().out)["summary"]["regressions"] == 1
 
 
+def test_cli_rejects_benchmark_output_that_overlaps_manifest_or_baseline(tmp_path: Path, capsys) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    common = ["--manifest", str(manifest_path), "--cache-dir", str(cache), "--offline"]
+    original_manifest = manifest_path.read_bytes()
+
+    with pytest.raises(SystemExit) as caught:
+        main(["benchmark", "fetch", *common, "--output", str(manifest_path)])
+    assert caught.value.code == 2
+    assert "must not overlap --manifest input path" in capsys.readouterr().err
+    assert manifest_path.read_bytes() == original_manifest
+
+    baseline = tmp_path / "baseline.json"
+    assert main(["benchmark", "baseline", *common, "--output", str(baseline)]) == 0
+    original_baseline = baseline.read_bytes()
+    with pytest.raises(SystemExit) as caught:
+        main(["benchmark", "run", *common, "--baseline", str(baseline), "--output", str(baseline)])
+    assert caught.value.code == 2
+    assert "must not overlap --baseline input path" in capsys.readouterr().err
+    assert baseline.read_bytes() == original_baseline
+
+
 def test_difference_messages_cover_missing_and_unexpected_values() -> None:
     assert _differences({"a": 1}, {"b": 2}) == [
         "$.a: expected 1, value is missing",
@@ -684,3 +895,29 @@ def test_benchmark_schemas_validate_manifest_fetch_baseline_and_result(tmp_path:
         schema = json.loads((root / schema_name).read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(value)
+
+
+def test_committed_public_baseline_is_schema_valid_digest_bound_and_suite_files_match() -> None:
+    root = Path(__file__).parents[1]
+    benchmark_root = root / "benchmarks"
+    manifest_path = benchmark_root / "manifest.json"
+    baseline_path = benchmark_root / "baseline.json"
+    manifest = load_manifest(manifest_path)
+    loaded_baseline = load_baseline(baseline_path, manifest)
+
+    for instance_path, schema_path in (
+        (manifest_path, benchmark_root / "schemas" / "manifest.schema.json"),
+        (baseline_path, benchmark_root / "schemas" / "baseline.schema.json"),
+    ):
+        instance = json.loads(instance_path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(instance)
+
+    assert set(loaded_baseline) == {
+        f"{dataset.dataset_id}/{case.case_id}" for dataset in manifest.datasets for case in dataset.cases
+    }
+    for metadata in manifest.suite_files.values():
+        source = manifest.path.parent / metadata.path
+        assert source.stat().st_size == metadata.size_bytes
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata.sha256

@@ -35,6 +35,7 @@ def test_cli_rules_text_and_json_expose_the_same_stable_catalog(capsys) -> None:
     assert [item["id"] for item in payload] == sorted(item["id"] for item in payload)
     assert {item["id"] for item in payload} == {
         "OC0001",
+        "OC0002",
         "OC1001",
         "OC1002",
         "OC1003",
@@ -43,12 +44,24 @@ def test_cli_rules_text_and_json_expose_the_same_stable_catalog(capsys) -> None:
         "OC2002",
         "OC2003",
         "OC2004",
+        "OC2005",
+        "OC2006",
         "OC2010",
         "OC2011",
+        "OC2012",
         "OC2101",
         "OC3001",
         "OC3002",
+        "OC3010",
+        "OC3011",
+        "OC3012",
+        "OC3013",
+        "OC3014",
         "OC4001",
+        "OC4002",
+        "OC4010",
+        "OC4011",
+        "OC4012",
         "OC5001",
         "OC5002",
         "OC6001",
@@ -150,7 +163,86 @@ def test_cli_format_all_writes_exact_report_set(project_files, tmp_path: Path) -
         "openconstraint-report.sarif",
         "openconstraint-report.html",
     }
-    assert json.loads((output / "openconstraint-report.json").read_text(encoding="utf-8"))["schema_version"] == "1.0.0"
+    assert json.loads((output / "openconstraint-report.json").read_text(encoding="utf-8"))["schema_version"] == "1.1.0"
+
+
+@pytest.mark.parametrize("protected_kind", ["verilog", "sdc"])
+def test_cli_rejects_report_output_that_resolves_to_design_input(
+    project_files, tmp_path: Path, capsys, protected_kind: str
+) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+    protected = {"verilog": verilog, "sdc": sdc}[protected_kind]
+    original = protected.read_bytes()
+    alias_parent = tmp_path / "report-alias"
+    output = alias_parent / ".." / protected.name
+
+    with pytest.raises(SystemExit) as caught:
+        main([*_audit_args(verilog, liberty, sdc), "--format", "json", "--output", str(output)])
+
+    assert caught.value.code == 2
+    error = capsys.readouterr().err
+    assert "report output path" in error
+    assert "must not overlap" in error
+    assert protected.read_bytes() == original
+    assert not alias_parent.exists()
+
+
+def test_cli_format_all_preflights_every_generated_path_before_writing(project_files, tmp_path: Path, capsys) -> None:
+    verilog, liberty, _ = project_files(sdc=COMPLETE_SDC)
+    output = tmp_path / "all"
+    output.mkdir()
+    sdc = output / "openconstraint-report.sarif"
+    sdc.write_text(COMPLETE_SDC, encoding="utf-8", newline="\n")
+    original = sdc.read_bytes()
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "audit",
+                "--verilog",
+                str(verilog),
+                "--liberty",
+                str(liberty),
+                "--mode",
+                f"functional={sdc}",
+                "--top",
+                "top",
+                "--format",
+                "all",
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap SDC input path" in capsys.readouterr().err
+    assert sdc.read_bytes() == original
+    assert {path.name for path in output.iterdir()} == {"openconstraint-report.sarif"}
+
+
+def test_cli_rejects_report_output_that_overlaps_explicit_opensta_binary(project_files, tmp_path: Path, capsys) -> None:
+    verilog, liberty, sdc = project_files(sdc=COMPLETE_SDC)
+    executable = tmp_path / "trusted-sta"
+    executable.write_bytes(b"do-not-overwrite")
+    original = executable.read_bytes()
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                *_audit_args(verilog, liberty, sdc),
+                "--opensta",
+                "--opensta-bin",
+                str(executable),
+                "--format",
+                "json",
+                "--output",
+                str(executable),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --opensta-bin input path" in capsys.readouterr().err
+    assert executable.read_bytes() == original
 
 
 def test_cli_format_all_rejects_stdout_destination(project_files, capsys) -> None:

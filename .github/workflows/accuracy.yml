@@ -1,0 +1,117 @@
+name: Labeled semantic accuracy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/accuracy.yml"
+      - "benchmarks/accuracy/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+      - "tests/test_accuracy_benchmark.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/accuracy.yml"
+      - "benchmarks/accuracy/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+      - "tests/test_accuracy_benchmark.py"
+  workflow_dispatch:
+
+concurrency:
+  group: accuracy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  truth-set:
+    name: Reviewed mutation truth set
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install OpenConstraint and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Test truth-set validation, scoring, and determinism
+        run: pytest tests/test_accuracy_benchmark.py
+
+      - name: Run the reviewed truth set
+        if: always()
+        run: |
+          python -m openconstraint.accuracy \
+            --truth-set benchmarks/accuracy/truth-set.json \
+            --output accuracy-result.json
+
+      - name: Validate truth and result schemas
+        if: always() && hashFiles('accuracy-result.json') != ''
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          root = Path("benchmarks/accuracy")
+          for instance_path, schema_path in (
+              (root / "truth-set.json", root / "schemas/truth-set.schema.json"),
+              (Path("accuracy-result.json"), root / "schemas/result.schema.json"),
+          ):
+              instance = json.loads(instance_path.read_text(encoding="utf-8"))
+              schema = json.loads(schema_path.read_text(encoding="utf-8"))
+              Draft202012Validator.check_schema(schema)
+              Draft202012Validator(schema).validate(instance)
+
+      - name: Write semantic accuracy summary
+        if: always() && hashFiles('accuracy-result.json') != ''
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path("accuracy-result.json").read_text(encoding="utf-8"))
+          summary = result["summary"]
+          lines = [
+              "## Labeled semantic accuracy",
+              "",
+              "| Status | Cases | Exact cases | TP | FP | FN | Precision | Recall | False-pass rate |",
+              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+              (
+                  f"| {'pass' if summary['passed'] else 'fail'} | {summary['case_count']} | "
+                  f"{summary['exact_match_case_count']} | {summary['true_positives']} | "
+                  f"{summary['false_positives']} | {summary['false_negatives']} | "
+                  f"{summary['precision']:.6f} | {summary['recall']:.6f} | "
+                  f"{summary['false_pass_rate']:.6f} |"
+              ),
+              "",
+              "Tested rule IDs: " + ", ".join(summary["tested_rule_ids"]),
+              "",
+              "This is a reviewed synthetic mutation benchmark, not an industrial or vendor-parity claim.",
+          ]
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as output:
+              output.write("\n".join(lines) + "\n")
+
+      - name: Preserve the machine-readable scorecard
+        if: always() && hashFiles('accuracy-result.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: labeled-semantic-accuracy
+          path: accuracy-result.json
+          if-no-files-found: error
+          retention-days: 30

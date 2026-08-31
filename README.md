@@ -5,7 +5,7 @@
 [![Benchmarks](https://github.com/ajayasai/OpenConstraint/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/benchmarks.yml)
 [![Parser fuzzing](https://github.com/ajayasai/OpenConstraint/actions/workflows/fuzz.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/fuzz.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Status: beta](https://img.shields.io/badge/status-0.2.0--beta-orange.svg)](CHANGELOG.md)
+[![Status: beta](https://img.shields.io/badge/status-0.3.0--beta-orange.svg)](CHANGELOG.md)
 
 OpenConstraint is an open-source, deterministic auditor for Synopsys Design
 Constraints (SDC). It statically reads structural Verilog, relevant Liberty
@@ -19,7 +19,7 @@ HTML clock/exception dashboard. An explicit `--opensta` option can also run
 trusted inputs through a separately installed OpenSTA executable. OpenConstraint
 is built for early feedback and CI policy—not timing sign-off.
 
-> **Beta scope:** v0.2.0-beta is a structural and semantic checker. It does not
+> **Beta scope:** v0.3.0-beta is a structural and semantic checker. It does not
 > calculate delays, formally prove false paths, or certify that a design is
 > correctly constrained for silicon sign-off. The default static backend never
 > executes Tcl. `--opensta` is an explicit trusted-input execution boundary.
@@ -67,6 +67,8 @@ openconstraint audit \
 ## What the beta checks
 
 - Malformed Tcl grouping without evaluating the Tcl program.
+- Incomplete structural models caused by ignored, inferred, malformed, or
+  truncated Verilog/Liberty/elaboration input.
 - Static `get_ports`, `get_pins`, `get_cells`, `get_nets`, `get_clocks`, and
   register queries that match zero objects.
 - Wildcard/regular-expression queries that match a risky share of a collection.
@@ -92,14 +94,17 @@ OpenConstraint reports four per-mode components:
 | Component | Base weight |
 | --- | ---: |
 | Clocked sequential endpoints | 50% |
-| Input-delay coverage | 20% |
-| Output-delay coverage | 20% |
-| Resolvable static object queries | 10% |
+| Input-delay min/max × rise/fall slots per relationship | 20% |
+| Output-delay min/max × rise/fall slots per relationship | 20% |
+| Fully resolvable object queries | 10% |
 
 Empty categories are omitted and the remaining weights are renormalized. This
 score is useful for regression gating, but it does not measure exception
 validity, analog timing accuracy, or functional intent. Read the exact
 [coverage methodology](docs/coverage-methodology.md) before setting a threshold.
+Invalid I/O relationships cover zero slots, and any structural parser or
+elaboration warning forces the aggregate score to 0/F rather than reporting
+precision from an untrusted model.
 
 ## CI-native output
 
@@ -114,6 +119,13 @@ openconstraint audit \
 to produce a report without failing on findings. A quality-policy failure exits
 with code 1; invalid CLI or input usage exits with code 2. See
 [CI integration](docs/ci-integration.md) and [report formats](docs/report-formats.md).
+
+For an existing design, `--write-baseline FILE` snapshots current diagnostics
+so new findings can be gated immediately. Exact-fingerprint `--waivers FILE`
+entries require a review reason and may expire; `--strict-controls` rejects
+stale baseline entries and unused waivers. Reports retain every controlled
+finding plus the SHA-256 provenance of each policy file. See
+[adoption controls](docs/adoption-controls.md).
 
 ## Real-design evidence and continuous parser testing
 
@@ -162,7 +174,7 @@ The built-in parsers intentionally cover only the constructs needed by the
 current rules. Unsupported syntax is not silently treated as sign-off-clean.
 Review the [compatibility matrix](docs/compatibility.md).
 
-OpenSTA is a separate GPL-3.0-or-later project. v0.2.0-beta can invoke an
+OpenSTA is a separate GPL-3.0-or-later project. v0.3.0-beta can invoke an
 installed executable only when `--opensta` is supplied; it does not link or
 redistribute OpenSTA. Each mode runs in an isolated process with a default
 120-second timeout, and the report records the OpenSTA version and SHA-256 of
@@ -187,6 +199,7 @@ commercial constraint or sign-off product.
 - [Public-design benchmarks](benchmarks/README.md)
 - [Parser fuzzing](fuzz/README.md)
 - [Compatibility and limitations](docs/compatibility.md)
+- [Competitive position and evidence bar](docs/competitive-position.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Governance](GOVERNANCE.md)

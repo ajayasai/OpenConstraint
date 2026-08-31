@@ -7,7 +7,7 @@ default static backend parses but does not execute those files. In particular,
 it never passes SDC to a Tcl interpreter.
 
 This substantially reduces risk compared with evaluating an arbitrary SDC
-program, but it does not make hostile input risk-free. v0.2.0-beta bounds
+program, but it does not make hostile input risk-free. v0.3.0-beta bounds
 pathological Verilog bus expansion, Liberty group nesting, and structural
 hierarchy depth, but it does not impose a general file-size, memory, or runtime
 quota.
@@ -30,9 +30,12 @@ lookups, Tcl variables, and command substitutions are not evaluated.
 
 ### Output paths
 
-The user chooses output paths. `audit` and `schema` can overwrite the named
-file; `demo` and `--format all` create directories and overwrite their known
-report names. Do not point them at sensitive files or shared untrusted paths.
+The user chooses output paths. Before reading controls or writing output,
+`audit` resolves every report and generated-baseline destination and rejects
+overlap with any Verilog, Liberty, SDC, waiver, or baseline input. It can still
+overwrite an unrelated named output. `schema` can overwrite its named file;
+`demo` and `--format all` create directories and overwrite their known output
+names. Do not point them at sensitive files or shared untrusted paths.
 
 ### Reports
 
@@ -86,7 +89,9 @@ expansion at 65,536 bits; expanded names at 131,072 per parsed Verilog file;
 Verilog connections at 65,536 per instance; structural statements at 200,000;
 parsed Verilog modules at 10,000; detailed Verilog warnings at 1,000;
 Liberty/hierarchy depth at 256 levels; and elaborated structural objects at
-262,144. A deterministic summary warning records cardinality truncation.
+262,144. A deterministic summary warning records cardinality truncation, and
+design-level error `OC0002` prevents the resulting partial model from passing
+the default severity gate.
 These are defense-in-depth controls, not a sandbox or a complete resource
 budget. For untrusted inputs:
 
@@ -104,9 +109,10 @@ a short-lived CI artifact for minimization and regression testing.
 ## CI guidance
 
 Repository workflows use read-only permissions by default and pin Actions to
-immutable commits. Release publishing is isolated behind a GitHub environment
-and OIDC trusted publishing. Fork pull requests must never receive release
-credentials.
+immutable commits. Optional PyPI publishing is isolated behind the `pypi`
+GitHub environment and OIDC trusted publishing. The tag-only GitHub Release job
+receives a scoped `contents: write` token and no package credential. Fork pull
+requests must never receive release credentials.
 
 ## Non-goals and non-guarantees
 

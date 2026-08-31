@@ -8,10 +8,20 @@ import math
 import shutil
 import sys
 from collections.abc import Sequence
+from hashlib import sha256
 from importlib import resources
 from pathlib import Path
 
+from openconstraint.adoption import (
+    adoption_strict_failure,
+    apply_adoption_controls,
+    load_diagnostic_baseline,
+    load_waivers,
+    render_baseline,
+)
+from openconstraint.adoption import baseline_from_result as diagnostic_baseline_from_result
 from openconstraint.benchmark import (
+    BenchmarkManifest,
     baseline_from_result,
     fetch_suite,
     load_baseline,
@@ -19,8 +29,17 @@ from openconstraint.benchmark import (
     render_benchmark_json,
     run_suite,
 )
-from openconstraint.engine import AuditOptions, ModeInput, audit
-from openconstraint.model import SEVERITY_RANK, AuditResult, Design, Diagnostic, Severity, SourceLocation
+from openconstraint.engine import AuditOptions, ModeInput, audit, audit_sdc_text
+from openconstraint.model import (
+    SEVERITY_RANK,
+    AuditResult,
+    Design,
+    Diagnostic,
+    ModeResult,
+    Severity,
+    SourceLocation,
+    effective_io_delay_semantics,
+)
 from openconstraint.opensta import OpenSTAError, OpenSTAValidationResult, validate_with_opensta
 from openconstraint.parsers.liberty import CellLibrary, parse_liberty
 from openconstraint.parsers.verilog import elaborate, parse_verilog
@@ -32,6 +51,12 @@ from openconstraint.rules import RULES
 from openconstraint.version import __version__
 
 FORMATS = {"text": render_text, "json": render_json, "sarif": render_sarif, "html": render_html}
+FORMAT_EXTENSIONS = {"text": "txt", "json": "json", "sarif": "sarif", "html": "html"}
+SCHEMA_FILES = {
+    "report": "openconstraint-report.schema.json",
+    "waivers": "openconstraint-waivers.schema.json",
+    "baseline": "openconstraint-diagnostic-baseline.schema.json",
+}
 
 
 def _percentage(value: str) -> float:
@@ -101,6 +126,28 @@ def _parser() -> argparse.ArgumentParser:
     audit_parser.add_argument("--broad-match-ratio", type=_ratio, default=0.8)
     audit_parser.add_argument("--no-implicit-waveform-note", action="store_true")
     audit_parser.add_argument(
+        "--waivers",
+        action="append",
+        metavar="FILE",
+        help="Versioned exact-fingerprint waiver file (repeatable).",
+    )
+    baseline_group = audit_parser.add_mutually_exclusive_group()
+    baseline_group.add_argument(
+        "--baseline",
+        metavar="FILE",
+        help="Reviewed diagnostic baseline; only findings absent from it remain active.",
+    )
+    baseline_group.add_argument(
+        "--write-baseline",
+        metavar="FILE",
+        help="Write a deterministic baseline from raw findings before policy gates.",
+    )
+    audit_parser.add_argument(
+        "--strict-controls",
+        action="store_true",
+        help="Fail when a waiver is unused or a baseline entry is stale.",
+    )
+    audit_parser.add_argument(
         "--opensta",
         action="store_true",
         help="Explicitly execute trusted SDC in an installed OpenSTA process for validation.",
@@ -113,7 +160,8 @@ def _parser() -> argparse.ArgumentParser:
     rules_parser = subcommands.add_parser("rules", help="List stable diagnostics.")
     rules_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
-    schema_parser = subcommands.add_parser("schema", help="Print or copy the report JSON Schema.")
+    schema_parser = subcommands.add_parser("schema", help="Print or copy a packaged JSON Schema.")
+    schema_parser.add_argument("--kind", choices=SCHEMA_FILES, default="report")
     schema_parser.add_argument("--output", default="-", metavar="PATH")
 
     demo_parser = subcommands.add_parser("demo", help="Run the bundled synthetic design and write every report format.")
@@ -186,15 +234,70 @@ def _write_all(result: AuditResult, output: str) -> None:
         raise ValueError("--format all requires --output to name a directory")
     destination = Path(output)
     destination.mkdir(parents=True, exist_ok=True)
-    extensions = {"text": "txt", "json": "json", "sarif": "sarif", "html": "html"}
     for name, renderer in FORMATS.items():
-        (destination / f"openconstraint-report.{extensions[name]}").write_text(
+        (destination / f"openconstraint-report.{FORMAT_EXTENSIONS[name]}").write_text(
             renderer(result), encoding="utf-8", newline="\n"
         )
 
 
+def _report_output_paths(output: str, output_format: str) -> tuple[Path, ...]:
+    """Resolve every file that an audit report invocation can write."""
+
+    if output == "-":
+        if output_format == "all":
+            raise ValueError("--format all requires --output to name a directory")
+        return ()
+    target = Path(output).resolve()
+    if output_format != "all":
+        return (target,)
+    return tuple((target / f"openconstraint-report.{FORMAT_EXTENSIONS[name]}").resolve() for name in FORMATS)
+
+
+def _validate_audit_output_paths(
+    arguments: argparse.Namespace,
+    modes: Sequence[ModeInput],
+) -> None:
+    """Reject report destinations that could overwrite an audit input."""
+
+    report_targets = _report_output_paths(arguments.output, arguments.output_format)
+    if arguments.write_baseline and arguments.output != "-":
+        baseline_target = Path(arguments.write_baseline).resolve()
+        output_target = Path(arguments.output).resolve()
+        # Retain the historical directory-level check for --format all as well
+        # as checking each concrete generated report file.
+        if baseline_target == output_target or baseline_target in report_targets:
+            raise ValueError("--write-baseline must not overlap a report output path")
+
+    input_paths: list[tuple[str, str]] = []
+    input_paths.extend(("--verilog", path) for path in arguments.verilog)
+    input_paths.extend(("--liberty", path) for path in arguments.liberty)
+    input_paths.extend(("SDC", path) for mode in modes for path in mode.sdc_paths)
+    input_paths.extend(("--waivers", path) for path in (arguments.waivers or ()))
+    if arguments.baseline:
+        input_paths.append(("--baseline", arguments.baseline))
+    if arguments.opensta and arguments.opensta_bin:
+        input_paths.append(("--opensta-bin", arguments.opensta_bin))
+
+    resolved_inputs = [(option, Path(path).resolve()) for option, path in input_paths]
+    for report_target in report_targets:
+        for option, input_target in resolved_inputs:
+            if report_target == input_target:
+                raise ValueError(
+                    f"report output path {report_target} must not overlap {option} input path {input_target}"
+                )
+    if arguments.write_baseline:
+        baseline_target = Path(arguments.write_baseline).resolve()
+        for option, input_target in resolved_inputs:
+            if baseline_target == input_target:
+                raise ValueError(
+                    f"--write-baseline path {baseline_target} must not overlap {option} input path {input_target}"
+                )
+
+
 def _quality_exit(result: AuditResult, fail_on: str, min_coverage: float | None) -> int:
     if min_coverage is not None and any(mode.coverage.score < min_coverage for mode in result.modes):
+        return 1
+    if adoption_strict_failure(result):
         return 1
     if fail_on == "never":
         return 0
@@ -202,23 +305,103 @@ def _quality_exit(result: AuditResult, fail_on: str, min_coverage: float | None)
     return 1 if any(SEVERITY_RANK[item.severity] >= SEVERITY_RANK[threshold] for item in result.diagnostics) else 0
 
 
-def _merge_opensta(result: AuditResult, validation: OpenSTAValidationResult) -> None:
+def _mode_semantics(mode: ModeResult) -> dict[str, object]:
+    exception_records = [
+        {
+            "kind": item.kind,
+            "from": sorted(item.from_objects),
+            "to": sorted(item.to_objects),
+            "through": [sorted(group) for group in item.through_objects],
+            "qualifiers": item.qualifiers,
+        }
+        for item in mode.exceptions
+    ]
+    exception_records.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+    io_delay_records = effective_io_delay_semantics(mode.io_delays)
+    return {
+        "clocks": [
+            {
+                "name": clock.name,
+                "targets": sorted(clock.targets),
+                "period": clock.period,
+                "waveform": list(clock.waveform) if clock.waveform is not None else None,
+                "generated": clock.generated,
+                "source_targets": sorted(clock.source_targets),
+                "master_clock": clock.master_clock,
+                "divide_by": clock.divide_by,
+                "multiply_by": clock.multiply_by,
+                "duty_cycle": clock.duty_cycle,
+                "invert": clock.invert,
+                "combinational": clock.combinational,
+                "edges": list(clock.edges) if clock.edges is not None else None,
+                "edge_shift": list(clock.edge_shift) if clock.edge_shift is not None else None,
+            }
+            for clock in sorted(mode.clocks.values(), key=lambda item: item.name)
+        ],
+        "exceptions": exception_records,
+        "io_delays": io_delay_records,
+        "coverage": mode.coverage.to_dict(),
+    }
+
+
+def _semantic_digest(payload: dict[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _diagnostic_semantic_key(finding: Diagnostic) -> tuple[str, str, str]:
+    return (
+        finding.rule_id,
+        finding.message,
+        json.dumps(finding.evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+    )
+
+
+def _merge_opensta(
+    result: AuditResult,
+    validation: OpenSTAValidationResult,
+    design: Design,
+    options: AuditOptions,
+) -> None:
     mode_lookup = {mode.name: mode for mode in result.modes}
     public_modes: list[dict[str, object]] = []
     for mode_result in validation.modes:
-        public_modes.append(
-            {
-                "mode": mode_result.mode,
-                "succeeded": mode_result.succeeded,
-                "return_code": mode_result.returncode,
-                "timed_out": mode_result.timed_out,
-                "duration_seconds": round(mode_result.duration_seconds, 6),
-                "effective_sdc_sha256": mode_result.effective_sdc_sha256,
-                "stdout": mode_result.stdout,
-                "stderr": mode_result.stderr,
-            }
-        )
+        public_mode: dict[str, object] = {
+            "mode": mode_result.mode,
+            "succeeded": mode_result.succeeded,
+            "return_code": mode_result.returncode,
+            "timed_out": mode_result.timed_out,
+            "duration_seconds": round(mode_result.duration_seconds, 6),
+            "effective_sdc_sha256": mode_result.effective_sdc_sha256,
+            "stdout": mode_result.stdout,
+            "stderr": mode_result.stderr,
+            "effective_audit": None,
+        }
+        public_modes.append(public_mode)
         if mode_result.succeeded:
+            mode = mode_lookup.get(mode_result.mode)
+            if mode is not None and mode_result.effective_sdc is not None:
+                effective = audit_sdc_text(
+                    design,
+                    mode_result.mode,
+                    mode_result.effective_sdc,
+                    path=f"<opensta-effective:{mode_result.mode}>",
+                    options=options,
+                )
+                existing = {_diagnostic_semantic_key(item) for item in mode.diagnostics}
+                added = [item for item in effective.diagnostics if _diagnostic_semantic_key(item) not in existing]
+                mode.diagnostics.extend(added)
+                result.diagnostics.extend(added)
+                static_semantics = _mode_semantics(mode)
+                effective_semantics = _mode_semantics(effective)
+                public_mode["effective_audit"] = {
+                    "coverage": effective.coverage.to_dict(),
+                    "diagnostic_count": len(effective.diagnostics),
+                    "added_diagnostic_count": len(added),
+                    "static_semantic_sha256": _semantic_digest(static_semantics),
+                    "effective_semantic_sha256": _semantic_digest(effective_semantics),
+                    "semantic_match": static_semantics == effective_semantics,
+                }
             continue
         mode = mode_lookup.get(mode_result.mode)
         location = (
@@ -264,7 +447,23 @@ def _merge_opensta(result: AuditResult, validation: OpenSTAValidationResult) -> 
 
 
 def _audit_command(arguments: argparse.Namespace) -> int:
+    waivers = None
+    baseline = None
+    if arguments.write_baseline:
+        if arguments.waivers:
+            raise ValueError("--write-baseline cannot be combined with --waivers")
+        if arguments.strict_controls:
+            raise ValueError("--strict-controls requires --waivers or --baseline")
+        if arguments.write_baseline == "-":
+            raise ValueError("--write-baseline must name a file, not stdout")
+    else:
+        if arguments.strict_controls and not arguments.waivers and not arguments.baseline:
+            raise ValueError("--strict-controls requires --waivers or --baseline")
     modes = _mode_inputs(arguments.sdc, arguments.mode)
+    _validate_audit_output_paths(arguments, modes)
+    if not arguments.write_baseline:
+        waivers = load_waivers(arguments.waivers) if arguments.waivers else None
+        baseline = load_diagnostic_baseline(arguments.baseline) if arguments.baseline else None
     design = _load_design(arguments.verilog, arguments.liberty, arguments.top)
     options = AuditOptions(
         broad_match_count=arguments.broad_match_count,
@@ -281,7 +480,11 @@ def _audit_command(arguments: argparse.Namespace) -> int:
             binary=arguments.opensta_bin,
             timeout=arguments.opensta_timeout,
         )
-        _merge_opensta(result, validation)
+        _merge_opensta(result, validation, design, options)
+    if arguments.write_baseline:
+        _write(render_baseline(diagnostic_baseline_from_result(result)), arguments.write_baseline)
+    elif waivers is not None or baseline is not None:
+        apply_adoption_controls(result, waivers=waivers, baseline=baseline, strict=arguments.strict_controls)
     if arguments.output_format == "all":
         _write_all(result, arguments.output)
     else:
@@ -308,12 +511,8 @@ def _rules_command(as_json: bool) -> int:
     return 0
 
 
-def _schema_command(output: str) -> int:
-    schema = (
-        resources.files("openconstraint.schemas")
-        .joinpath("openconstraint-report.schema.json")
-        .read_text(encoding="utf-8")
-    )
+def _schema_command(kind: str, output: str) -> int:
+    schema = resources.files("openconstraint.schemas").joinpath(SCHEMA_FILES[kind]).read_text(encoding="utf-8")
     _write(schema.rstrip() + "\n", output)
     return 0
 
@@ -333,8 +532,31 @@ def _demo_command(output_dir: str) -> int:
     return _quality_exit(result, "error", 100.0)
 
 
+def _validate_benchmark_output_path(
+    arguments: argparse.Namespace,
+    manifest: BenchmarkManifest | None = None,
+) -> None:
+    """Reject benchmark output that would overwrite a declared input."""
+
+    if arguments.output == "-":
+        return
+    output = Path(arguments.output).resolve()
+    inputs = [("--manifest", Path(arguments.manifest).resolve())]
+    if getattr(arguments, "baseline", None):
+        inputs.append(("--baseline", Path(arguments.baseline).resolve()))
+    if manifest is not None:
+        inputs.extend(
+            ("suite file", (manifest.path.parent / item.path).resolve()) for item in manifest.suite_files.values()
+        )
+    for label, source in inputs:
+        if output == source:
+            raise ValueError(f"benchmark output path {output} must not overlap {label} input path {source}")
+
+
 def _benchmark_command(arguments: argparse.Namespace) -> int:
+    _validate_benchmark_output_path(arguments)
     manifest = load_manifest(arguments.manifest)
+    _validate_benchmark_output_path(arguments, manifest)
     common = {
         "dataset_ids": arguments.dataset,
         "case_ids": arguments.case,
@@ -365,7 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "rules":
             return _rules_command(arguments.json)
         if arguments.command == "schema":
-            return _schema_command(arguments.output)
+            return _schema_command(arguments.kind, arguments.output)
         if arguments.command == "demo":
             return _demo_command(arguments.output_dir)
         if arguments.command == "benchmark":

@@ -30,12 +30,32 @@ def test_liberty_extracts_combinational_flipflop_and_latch_metadata() -> None:
     assert not library.warnings
     assert set(library.cells) == {"BUF", "INV", "DFF", "DFFR", "DLAT"}
     assert library.cells["BUF"].pin_directions == {"A": "input", "Y": "output"}
+    assert library.cells["BUF"].combinational_dependencies == {"Y": {"A"}}
     assert library.cells["DFF"].sequential
     assert library.cells["DFF"].clock_pins == {"CK"}
     assert library.cells["DFF"].data_pins == {"D"}
     assert library.cells["DLAT"].sequential
     assert library.cells["DLAT"].clock_pins == {"G"}
     assert library.cells["DLAT"].data_pins == {"D"}
+
+
+def test_liberty_extracts_related_pin_timing_dependencies() -> None:
+    library = parse_liberty_text(
+        """
+library (arcs) {
+  cell (MUX) {
+    pin (A) { direction : input; }
+    pin (B) { direction : input; }
+    pin (Y) {
+      direction : output;
+      timing () { related_pin : "A B"; }
+    }
+  }
+}
+"""
+    )
+
+    assert library.cells["MUX"].combinational_dependencies == {"Y": {"A", "B"}}
 
 
 def test_liberty_ignores_comments_handles_quoted_names_and_bus_groups() -> None:
@@ -346,6 +366,25 @@ endmodule
     assert design.sequential_clock_pins == {"state/CLK"}
     assert design.sequential_endpoints == {"state/D"}
     assert design.pins["state/Q"].direction == "output"
+    assert design.warnings == [
+        "Liberty metadata is missing for 1 instantiated cell type(s); "
+        "inferred sequential and pin roles from names (sample: MYSTERY_DFF)"
+    ]
+
+
+def test_unsupported_structural_statements_produce_model_warning() -> None:
+    parsed = parse_verilog_text(
+        """
+module top(input data, output result);
+  parameter WIDTH = 1;
+  BUF u_buf (.A(data), .Y(result));
+endmodule
+"""
+    )
+
+    assert any(
+        "ignored unsupported statement" in warning and "parameter WIDTH" in warning for warning in parsed.warnings
+    )
 
 
 def test_constants_do_not_create_fake_nets_or_drivers() -> None:

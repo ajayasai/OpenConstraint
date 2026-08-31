@@ -1,22 +1,24 @@
-OpenConstraint 0.2.0b0 — tiny_top
+OpenConstraint 0.3.0b0 — tiny_top
 Design: 8 ports, 3 cells, 2 sequential endpoints
 
 Mode functional: 100.00% structural coverage (grade A)
   Clocked sequential endpoints       2/2      100.00%
-  Input-delay coverage               5/5      100.00%
-  Output-delay coverage              2/2      100.00%
+  Input-delay coverage              20/20     100.00%
+  Output-delay coverage              8/8      100.00%
   Resolvable object queries          3/3      100.00%
 
 Mode scan: 100.00% structural coverage (grade A)
   Clocked sequential endpoints       2/2      100.00%
-  Input-delay coverage               5/5      100.00%
-  Output-delay coverage              2/2      100.00%
+  Input-delay coverage              20/20     100.00%
+  Output-delay coverage              8/8      100.00%
   Resolvable object queries          3/3      100.00%
 
 NOTE    OC5001 [cross-mode] examples/tiny/functional.sdc:1:1 — Clock 'core_clk' differs across constraint modes
          Fix: Review the per-mode definitions and record intentional differences in version control.
+         Fingerprint: 8a09736906edb96230c7
 NOTE    OC5001 [cross-mode] examples/tiny/scan.sdc:1:1 — Clock 'scan_clk' differs across constraint modes
          Fix: Review the per-mode definitions and record intentional differences in version control.
+         Fingerprint: cc67ff87f248c842f96e
 
 Summary: 0 error(s), 0 warning(s), 2 note(s)
 Structural coverage measures modeled obligations; it does not prove functional false paths or sign-off correctness.

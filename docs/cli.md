@@ -15,6 +15,9 @@ openconstraint audit --verilog FILE [--verilog FILE ...]
                      [--broad-match-count COUNT]
                      [--broad-match-ratio RATIO]
                      [--no-implicit-waveform-note]
+                     [--waivers FILE ...]
+                     [--baseline FILE | --write-baseline FILE]
+                     [--strict-controls]
                      [--opensta]
                      [--opensta-bin PATH]
                      [--opensta-timeout SECONDS]
@@ -28,12 +31,16 @@ openconstraint audit --verilog FILE [--verilog FILE ...]
 | `--mode NAME=FILE` | Named-mode SDC; repeat a name to append files to that mode. |
 | `--top MODULE` | Top module. If omitted, the parser chooses the only uninstantiated module or its first parsed module when ambiguous. Specify it for reproducibility. |
 | `--format` | `text` by default. `all` writes every format to a directory. |
-| `--output PATH` | `-` means stdout. With `--format all`, this must be a directory path and cannot be `-`. |
+| `--output PATH` | `-` means stdout. With `--format all`, this must be a directory path and cannot be `-`. Every resolved report destination is rejected if it overlaps a Verilog, Liberty, SDC, waiver, baseline, or explicitly selected OpenSTA executable input. |
 | `--fail-on` | Lowest diagnostic severity that fails the quality gate. Default: `error`. `never` disables severity failure. |
 | `--min-coverage PERCENT` | Fail if any audited mode is below the finite 0–100 threshold. |
 | `--broad-match-count COUNT` | Nonnegative absolute wildcard threshold. Default: 50 matches. |
 | `--broad-match-ratio RATIO` | Finite 0–1 fractional wildcard threshold. Default: 0.8. |
 | `--no-implicit-waveform-note` | Suppress `OC2002` notes for valid implicit primary-clock waveforms. |
+| `--waivers FILE` | Apply a versioned exact-fingerprint waiver file; repeatable. Each waiver requires rule, severity, mode, and reason metadata and may have an expiry date. |
+| `--baseline FILE` | Load a reviewed diagnostic baseline. Matching legacy findings remain in disposition evidence but are removed from active severity counts. |
+| `--write-baseline FILE` | Write a deterministic baseline of raw findings. Cannot be combined with loaded controls or stdout, and cannot overlap any audit input or report destination. Ordinary quality gates still apply. |
+| `--strict-controls` | Fail with exit 1 when a waiver is unused or a baseline entry is stale. Requires `--waivers` or `--baseline`. |
 | `--opensta` | Explicitly execute trusted inputs in a separately installed OpenSTA process after the static audit. Off by default. |
 | `--opensta-bin PATH` | Executable path/name. With `--opensta`, defaults to discovering `sta` then `opensta` on `PATH`. |
 | `--opensta-timeout SECONDS` | Positive finite timeout for the version query and each mode process. Default: 120. |
@@ -53,6 +60,11 @@ query meets either configured threshold. `all_inputs`, `all_outputs`, and
 The report is written before the quality-policy exit code is calculated. This
 allows CI to upload SARIF or HTML even when findings fail the gate.
 
+Malformed, expired, ambiguous, or metadata-mismatched controls are input errors
+and exit 2. Stale/unused controls are reportable policy state and only fail when
+`--strict-controls` is selected. See [adoption controls](adoption-controls.md)
+for the formats, precedence, and recommended review flow.
+
 An OpenSTA mode timeout, nonzero exit, failed `check_setup`, or missing effective
 SDC emits error OC6001 and therefore normally exits 1 after writing the report.
 Failure to locate or start the explicitly requested executable is an input or
@@ -69,11 +81,13 @@ openconstraint rules --json
 
 ## `openconstraint schema`
 
-Print or copy the JSON report schema:
+Print or copy the report, waiver, or diagnostic-baseline JSON Schema:
 
 ```console
 openconstraint schema
 openconstraint schema --output openconstraint-report.schema.json
+openconstraint schema --kind waivers --output openconstraint-waivers.schema.json
+openconstraint schema --kind baseline --output openconstraint-diagnostic-baseline.schema.json
 ```
 
 ## `openconstraint demo`
@@ -101,7 +115,9 @@ openconstraint benchmark baseline --manifest FILE [--cache-dir DIR] [--offline] 
 All actions accept repeatable `--dataset ID` and `--case DATASET/CASE`
 selectors. Fetch and run write JSON to stdout by default; `--output FILE`
 redirects it. Run exits 1 for a case error or semantic-baseline mismatch and 2
-for invalid metadata, cache integrity failures, or unreadable inputs.
+for invalid metadata, cache integrity failures, or unreadable inputs. A
+resolved output path may not overlap the manifest, a loaded baseline, or a
+declared local suite input.
 
 The default cache is `.cache/openconstraint/benchmarks` below the user's home
 directory. For strict reproduction, fetch into an explicit cache and rerun with

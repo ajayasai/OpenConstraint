@@ -213,3 +213,148 @@ def test_invalid_regexp_is_an_unsupported_query_not_a_zero_match(audit_factory) 
     assert "OC1001" not in ids
     finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
     assert "invalid regular expression" in finding.evidence["reason"]
+
+
+def test_io_delay_analysis_flags_are_not_misparsed_as_value_options() -> None:
+    command = parse_sdc_text("set_input_delay -min -rise -add_delay 1.25 -clock core [get_ports data]\n").commands[0]
+
+    assert command.has("-min")
+    assert command.has("-rise")
+    assert command.has("-add_delay")
+    assert command.option("-clock") == "core"
+    assert command.positionals == ["1.25", "[get_ports data]"]
+
+
+def test_negative_numeric_arguments_remain_positionals() -> None:
+    command = parse_sdc_text("set_output_delay -min -1.25 -clock core [get_ports result]\n").commands[0]
+
+    assert command.options == {"-min": ["true"], "-clock": ["core"]}
+    assert command.positionals == ["-1.25", "[get_ports result]"]
+
+
+def test_min_max_delay_boolean_flags_do_not_consume_scope_options() -> None:
+    command = parse_sdc_text(
+        "set_max_delay -probe -ignore_clock_latency -from [get_ports data] -to [get_ports result] 2\n"
+    ).commands[0]
+
+    assert command.has("-probe")
+    assert command.has("-ignore_clock_latency")
+    assert command.option("-from") == "[get_ports data]"
+    assert command.option("-to") == "[get_ports result]"
+    assert command.positionals == ["2"]
+
+
+def test_omitted_get_patterns_use_the_sdc_implicit_wildcard(design_factory) -> None:
+    design = design_factory()
+    document = parse_sdc_text("set_false_path -from [get_cells] -to [get_ports]\n")
+    from_selector, to_selector = document.commands[0].selectors
+
+    assert from_selector.patterns == ("*",)
+    assert to_selector.patterns == ("*",)
+    assert resolve_selector(from_selector, design, {}).matches == {"u_ff", "u_out"}
+    assert resolve_selector(to_selector, design, {}).matches == {"clk", "clk2", "data", "spare", "result"}
+
+
+def test_sdc_parser_preserves_cross_option_occurrence_order() -> None:
+    command = parse_sdc_text(
+        "set_false_path -through [get_pins u_ff/D] -rise_through [get_pins u_ff/Q] -through [get_pins u_ff/CK]\n"
+    ).commands[0]
+
+    assert command.option_occurrences == [
+        ("-through", "[get_pins u_ff/D]"),
+        ("-rise_through", "[get_pins u_ff/Q]"),
+        ("-through", "[get_pins u_ff/CK]"),
+    ]
+
+
+def test_sdc_parser_records_selector_argument_roles() -> None:
+    command = parse_sdc_text(
+        "create_generated_clock -comment [get_ports data] -source [get_ports clk] -divide_by 2 [get_ports clk]\n"
+    ).commands[0]
+
+    assert [(selector.raw, selector.option) for selector in command.selectors] == [
+        ("[get_ports data]", "-comment"),
+        ("[get_ports clk]", "-source"),
+        ("[get_ports clk]", None),
+    ]
+
+
+def test_of_objects_resolves_connectivity_for_cells_pins_nets_and_ports(design_factory) -> None:
+    design = design_factory()
+    cases = (
+        ("[get_cells -of_objects [get_ports data]]", {"u_ff"}),
+        ("[get_cells -of_objects [get_pins u_ff/D]]", {"u_ff"}),
+        ("[get_cells -of_objects [get_nets q]]", {"u_ff", "u_out"}),
+        ("[get_nets -of_objects [get_cells u_ff]]", {"clk", "data", "q"}),
+        ("[get_nets -of_objects [get_pins u_ff/D]]", {"data"}),
+        ("[get_pins -of_objects [get_cells u_ff]]", {"u_ff/CK", "u_ff/D", "u_ff/Q"}),
+        ("[get_pins -of_objects [get_nets q]]", {"u_ff/Q", "u_out/A"}),
+        ("[get_ports -of_objects [get_nets result]]", {"result"}),
+    )
+
+    for query, expected in cases:
+        selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+        resolved = resolve_selector(selector, design, {})
+        assert resolved.error is None
+        assert resolved.matches == expected
+
+
+def test_of_objects_rejects_source_types_opensta_does_not_accept(design_factory) -> None:
+    design = design_factory()
+    queries = (
+        "[get_cells -of_objects [get_cells u_ff]]",
+        "[get_nets -of_objects [get_nets q]]",
+        "[get_nets -of_objects [get_ports data]]",
+        "[get_pins -of_objects [get_pins u_ff/D]]",
+        "[get_pins -of_objects [get_ports data]]",
+        "[get_ports -of_objects [get_pins u_out/Y]]",
+    )
+
+    for query in queries:
+        selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+        resolved = resolve_selector(selector, design, {})
+        assert resolved.matches == set()
+        assert resolved.error is not None
+        assert "invalid -of_objects source kind" in resolved.error
+
+
+def test_of_objects_ignores_positional_patterns_even_when_they_are_dynamic(design_factory) -> None:
+    design = design_factory()
+    selector = (
+        parse_sdc_text("set_false_path -to [get_cells -of_objects [get_nets q] $ignored_pattern]\n")
+        .commands[0]
+        .selectors[0]
+    )
+    resolved = resolve_selector(selector, design, {})
+
+    assert selector.patterns == ("$ignored_pattern",)
+    assert selector.dynamic is False
+    assert resolved.error is None
+    assert resolved.matches == {"u_ff", "u_out"}
+    assert resolved.unmatched_patterns == ()
+
+
+def test_of_objects_ignored_wildcard_does_not_trigger_broad_query_diagnostic(audit_factory) -> None:
+    result = audit_factory(
+        "set_false_path -from [get_cells -of_objects [get_nets q] *] -to [get_ports result]",
+        options=AuditOptions(broad_match_count=1, broad_match_ratio=0.01, broad_match_min_universe=1),
+    )
+
+    assert "OC1002" not in [finding.rule_id for finding in result.diagnostics]
+
+
+def test_nocase_only_changes_regexp_matching(design_factory) -> None:
+    design = design_factory()
+    glob = parse_sdc_text("set_false_path -to [get_ports -nocase DATA]\n").commands[0].selectors[0]
+    regexp = parse_sdc_text("set_false_path -to [get_ports -regexp -nocase {^DATA$}]\n").commands[0].selectors[0]
+
+    assert resolve_selector(glob, design, {}).matches == set()
+    assert resolve_selector(glob, design, {}).unmatched_patterns == ("DATA",)
+    assert resolve_selector(regexp, design, {}).matches == {"data"}
+
+
+def test_of_objects_query_participates_in_audit_without_unsupported_fallback(audit_factory) -> None:
+    result = audit_factory("set_false_path -from [get_cells -of_objects [get_nets q]] -to [get_ports result]")
+
+    assert not any(finding.rule_id in {"OC1001", "OC1004"} for finding in result.diagnostics)
+    assert result.modes[0].exceptions[0].from_objects == {"u_ff", "u_out"}

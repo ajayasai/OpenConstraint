@@ -1,38 +1,57 @@
-OpenConstraint 0.2.0b0 — tiny_top
+OpenConstraint 0.3.0b0 — tiny_top
 Design: 8 ports, 3 cells, 2 sequential endpoints
 
 Mode default: 57.50% structural coverage (grade D)
   Clocked sequential endpoints       2/2      100.00%
-  Input-delay coverage               0/3        0.00%
-  Output-delay coverage              0/2        0.00%
+  Input-delay coverage               0/12       0.00%
+  Output-delay coverage              0/8        0.00%
   Resolvable object queries          6/8       75.00%
 
 WARNING OC3001 [default] <design>:1:1 — 3 input port(s) have no input delay
          Fix: Add set_input_delay for synchronous interfaces or document an intentional asynchronous exception.
+         Fingerprint: b4591f52b27052f74bdd
 WARNING OC3002 [default] <design>:1:1 — 2 output port(s) have no output delay
          Fix: Add set_output_delay per interface and reference the appropriate clock.
+         Fingerprint: a17af0a1cf30a451a679
 ERROR   OC1001 [default] examples/tiny/broken.sdc:2:1 — Object query matches zero ports: [get_ports missing_clk]
-         Fix: Correct the pattern or hierarchy and confirm the intended object exists in this mode.
+         Fix: Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode.
+         Fingerprint: 8e9fcf3d27dd592952ee
 ERROR   OC2001 [default] examples/tiny/broken.sdc:2:1 — Clock 'ghost_clock' has no valid positive period
          Fix: Add -period for a primary clock or fix the generated-clock master/source relationship.
+         Fingerprint: 66d71b61e103bdc83846
+ERROR   OC2006 [default] examples/tiny/broken.sdc:2:1 — Primary clock definition is invalid
+         Fix: Provide a stable -name, use -add only with that name, and resolve every supplied target.
+         Fingerprint: a68692a96ba2684ed594
 WARNING OC1002 [default] examples/tiny/broken.sdc:3:1 — Wildcard query matches 8 of 8 ports
          Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+         Fingerprint: f962efd887e58eeedeb3
 NOTE    OC2002 [default] examples/tiny/broken.sdc:3:1 — Clock 'all_ports' uses the implicit 50% duty-cycle waveform
          Fix: Add -waveform only when the real active edges differ from {0, period/2}.
+         Fingerprint: 33b941324f97bc082b34
 ERROR   OC1001 [default] examples/tiny/broken.sdc:4:1 — Object query matches zero pins: [get_pins u_missing/CLK]
-         Fix: Correct the pattern or hierarchy and confirm the intended object exists in this mode.
+         Fix: Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode.
+         Fingerprint: 0834c05a44c5084f20c4
 ERROR   OC2001 [default] examples/tiny/broken.sdc:4:1 — Clock 'divided' has no valid positive period
          Fix: Add -period for a primary clock or fix the generated-clock master/source relationship.
+         Fingerprint: f3dafe96ff1050314509
 ERROR   OC2010 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divided' has no resolvable -source object
          Fix: Point -source at the master clock path and ensure the object query matches this netlist.
+         Fingerprint: 2c35eb961fc10f7b9484
 ERROR   OC2011 [default] examples/tiny/broken.sdc:4:1 — Generated clock 'divided' source is not reachable from its master clock
          Fix: Fix -source/-master_clock or the netlist clock path; inspect the HTML clock graph.
+         Fingerprint: 5d48e4825e2244070e98
 WARNING OC1002 [default] examples/tiny/broken.sdc:6:1 — Wildcard query matches 8 of 8 ports
          Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+         Fingerprint: c3f091eb5e9d28e97b15
 WARNING OC1002 [default] examples/tiny/broken.sdc:7:1 — Wildcard query matches 8 of 8 ports
          Fix: Narrow the pattern, list intentional groups, or review and baseline the exact matched objects.
+         Fingerprint: 2ad84962e4595834f3b0
 ERROR   OC4001 [default] examples/tiny/broken.sdc:7:1 — False-path and multicycle exceptions overlap
          Fix: Narrow the collections or keep one constraint that states the intended timing policy.
+         Fingerprint: 52cbcb30bc08536d3228
+WARNING OC4011 [default] examples/tiny/broken.sdc:7:1 — Multicycle path applies multiplier 2 to both setup and hold
+         Fix: State setup and hold separately; the usual same-clock pairing is setup N with hold N-1.
+         Fingerprint: c653e4eb148b997c95f5
 
-Summary: 7 error(s), 5 warning(s), 1 note(s)
+Summary: 8 error(s), 6 warning(s), 1 note(s)
 Structural coverage measures modeled obligations; it does not prove functional false paths or sign-off correctness.

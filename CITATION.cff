@@ -4,7 +4,7 @@ title: "OpenConstraint: an auditable static SDC constraint-quality checker"
 type: software
 authors:
   - name: "OpenConstraint contributors"
-version: "0.2.0-beta"
+version: "0.3.0-beta"
 license: Apache-2.0
 repository-code: "https://github.com/ajayasai/OpenConstraint"
 url: "https://github.com/ajayasai/OpenConstraint"
