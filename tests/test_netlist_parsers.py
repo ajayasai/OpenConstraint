@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from openconstraint.engine import ModeInput, audit, audit_sdc_text
 from openconstraint.parsers import liberty as liberty_parser
 from openconstraint.parsers import verilog as verilog_parser
 from openconstraint.parsers.liberty import (
@@ -30,12 +31,32 @@ def test_liberty_extracts_combinational_flipflop_and_latch_metadata() -> None:
     assert not library.warnings
     assert set(library.cells) == {"BUF", "INV", "DFF", "DFFR", "DLAT"}
     assert library.cells["BUF"].pin_directions == {"A": "input", "Y": "output"}
+    assert library.cells["BUF"].combinational_dependencies == {"Y": {"A"}}
     assert library.cells["DFF"].sequential
     assert library.cells["DFF"].clock_pins == {"CK"}
     assert library.cells["DFF"].data_pins == {"D"}
     assert library.cells["DLAT"].sequential
     assert library.cells["DLAT"].clock_pins == {"G"}
     assert library.cells["DLAT"].data_pins == {"D"}
+
+
+def test_liberty_extracts_related_pin_timing_dependencies() -> None:
+    library = parse_liberty_text(
+        """
+library (arcs) {
+  cell (MUX) {
+    pin (A) { direction : input; }
+    pin (B) { direction : input; }
+    pin (Y) {
+      direction : output;
+      timing () { related_pin : "A B"; }
+    }
+  }
+}
+"""
+    )
+
+    assert library.cells["MUX"].combinational_dependencies == {"Y": {"A", "B"}}
 
 
 def test_liberty_ignores_comments_handles_quoted_names_and_bus_groups() -> None:
@@ -191,6 +212,90 @@ endmodule
     ]
 
 
+def test_verilog_non_ansi_bus_replaces_scalar_header_placeholder_in_place() -> None:
+    parsed = parse_verilog_text(
+        """
+module legacy(clk, key, result);
+  input clk;
+  input [1:0] key;
+  output result;
+endmodule
+"""
+    )
+    module = parsed.modules["legacy"]
+
+    assert [(port.name, port.direction) for port in module.ports] == [
+        ("clk", "input"),
+        ("key[1]", "input"),
+        ("key[0]", "input"),
+        ("result", "output"),
+    ]
+    assert module.nets == {"clk", "key[1]", "key[0]", "result"}
+
+
+def test_verilog_non_ansi_mixed_bus_declaration_preserves_header_order() -> None:
+    parsed = parse_verilog_text(
+        """
+module mixed(first, second, scalar, bidirectional);
+  input [0:1] first, second;
+  output scalar;
+  inout bidirectional;
+endmodule
+"""
+    )
+
+    assert [(port.name, port.direction) for port in parsed.modules["mixed"].ports] == [
+        ("first[0]", "input"),
+        ("first[1]", "input"),
+        ("second[0]", "input"),
+        ("second[1]", "input"),
+        ("scalar", "output"),
+        ("bidirectional", "inout"),
+    ]
+
+
+def test_non_ansi_bus_does_not_create_wrong_direction_io_delay_finding() -> None:
+    parsed = parse_verilog_text("module top(key); input [1:0] key; endmodule")
+    design = elaborate(parsed, CellLibrary(), "top")
+
+    result = audit_sdc_text(design, "functional", "set_input_delay 1 [get_ports key*]")
+
+    assert result.io_delays[0].ports == frozenset({"key[1]", "key[0]"})
+    assert all(finding.rule_id != "OC3012" for finding in result.diagnostics)
+
+
+def test_non_ansi_bus_connections_elaborate_for_named_and_positional_instances() -> None:
+    parsed = parse_verilog_text(
+        """
+module leaf(bus, result);
+  input [1:0] bus;
+  output result;
+  BUF low (.A(bus[0]), .Y(result));
+endmodule
+module top(input [1:0] data, output named_result, output positional_result);
+  leaf named (.bus(data), .result(named_result));
+  leaf positional (data, positional_result);
+endmodule
+"""
+    )
+    design = elaborate(parsed, parse_liberty_text(SYNTHETIC_LIBERTY), "top")
+
+    assert design.pins["named/low/A"].net == "data[0]"
+    assert design.pins["named/low/Y"].net == "named_result"
+    assert design.pins["positional/low/A"].net == "data[0]"
+    assert design.pins["positional/low/Y"].net == "positional_result"
+
+
+def test_verilog_omits_non_ansi_scalar_placeholder_when_bus_expansion_is_bounded() -> None:
+    parsed = parse_verilog_text(
+        f"module bounded(oversized, scalar); input [{MAX_EXPANDED_BUS_WIDTH}:0] oversized; input scalar; endmodule"
+    )
+
+    assert [(port.name, port.direction) for port in parsed.modules["bounded"].ports] == [("scalar", "input")]
+    assert "oversized" not in parsed.modules["bounded"].nets
+    assert any("the parser limit is" in warning for warning in parsed.warnings)
+
+
 def test_verilog_bounds_pathological_bus_expansion() -> None:
     parsed = parse_verilog_text(
         f"module bounded(input [{MAX_EXPANDED_BUS_WIDTH}:0] oversized, input scalar); endmodule"
@@ -299,6 +404,37 @@ endmodule
     assert design.pins["block/state/Q"].net == "result"
 
 
+def test_elaboration_reports_escaped_identifier_hierarchy_path_collision(tmp_path) -> None:
+    parsed = parse_verilog_text(
+        r"""
+module wrapper(input data, output result);
+  BUF bar (.A(data), .Y(result));
+endmodule
+module top(input data, output escaped_result, output hierarchical_result);
+  INV \foo/bar (.A(data), .Y(escaped_result));
+  wrapper foo (.data(data), .result(hierarchical_result));
+endmodule
+"""
+    )
+    design = elaborate(parsed, parse_liberty_text(SYNTHETIC_LIBERTY), "top")
+
+    assert set(design.instances) == {"foo/bar"}
+    assert design.instances["foo/bar"].cell_type == "INV"
+    assert design.pins["foo/bar/Y"].net == "escaped_result"
+    assert any(
+        "flattened instance path collision at 'foo/bar'" in warning
+        and "retained the first 'INV' instance and ignored 'BUF'" in warning
+        for warning in design.warnings
+    )
+    sdc = tmp_path / "empty.sdc"
+    sdc.write_text("", encoding="utf-8")
+    result = audit(design, [ModeInput("functional", [str(sdc)])])
+    structural_finding = next(finding for finding in result.diagnostics if finding.rule_id == "OC0002")
+    assert any(
+        "flattened instance path collision" in warning for warning in structural_finding.evidence["warning_sample"]
+    )
+
+
 def test_many_named_hierarchical_connections_use_indexed_port_lookup() -> None:
     port_count = 2_500
     leaf_ports = ", ".join(f"p{index}" for index in range(port_count))
@@ -346,6 +482,25 @@ endmodule
     assert design.sequential_clock_pins == {"state/CLK"}
     assert design.sequential_endpoints == {"state/D"}
     assert design.pins["state/Q"].direction == "output"
+    assert design.warnings == [
+        "Liberty metadata is missing for 1 instantiated cell type(s); "
+        "inferred sequential and pin roles from names (sample: MYSTERY_DFF)"
+    ]
+
+
+def test_unsupported_structural_statements_produce_model_warning() -> None:
+    parsed = parse_verilog_text(
+        """
+module top(input data, output result);
+  parameter WIDTH = 1;
+  BUF u_buf (.A(data), .Y(result));
+endmodule
+"""
+    )
+
+    assert any(
+        "ignored unsupported statement" in warning and "parameter WIDTH" in warning for warning in parsed.warnings
+    )
 
 
 def test_constants_do_not_create_fake_nets_or_drivers() -> None:

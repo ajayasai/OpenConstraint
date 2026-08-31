@@ -75,9 +75,11 @@ using the aggregate coverage score; a non-applicable category is omitted, not
 counted as missing.
 
 A clean report means no implemented static rule fired for the modeled subset.
-It does not mean that every SDC construct was understood or that timing intent
-is correct. Review `OC1003`, `OC1004`, parser warnings, and the
-[compatibility document](compatibility.md).
+It does not mean that full Tcl/SDC semantics were modeled or that timing intent
+is correct. `OC0001`, `OC0003`, `OC1003`, and `OC1004` invalidate the affected
+mode's trusted coverage; `OC0002` does the same for every mode when the
+structural model is incomplete. Review the [compatibility
+document](compatibility.md) alongside the report.
 
 ## Optional trusted OpenSTA validation
 

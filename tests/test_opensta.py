@@ -6,16 +6,26 @@ from pathlib import Path
 
 import pytest
 
+import openconstraint.cli as cli
 import openconstraint.opensta as opensta
+from openconstraint.cli import _merge_opensta, _mode_semantics
+from openconstraint.engine import AuditOptions, ModeInput, audit
+from openconstraint.model import Clock, SourceLocation
 from openconstraint.opensta import (
     OpenSTAConfig,
     OpenSTAModeConfig,
+    OpenSTAModeResult,
     OpenSTANotFoundError,
+    OpenSTAValidationResult,
     discover_opensta,
     render_opensta_tcl,
     tcl_quote,
     validate_with_opensta,
 )
+from openconstraint.parsers.liberty import parse_liberty
+from openconstraint.parsers.verilog import elaborate, parse_verilog
+
+OPENSTA_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "opensta"
 
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -90,6 +100,128 @@ def test_rendered_driver_contains_only_fixed_quoted_commands(tmp_path: Path) -> 
         "}",
     ]
     assert driver.index("check_setup -verbose") < driver.index("write_sdc -no_timestamp")
+
+
+def test_real_opensta_fixture_is_statically_complete() -> None:
+    verilog = OPENSTA_FIXTURE_ROOT / "roundtrip.v"
+    liberty = OPENSTA_FIXTURE_ROOT / "roundtrip.lib"
+    sdc = OPENSTA_FIXTURE_ROOT / "roundtrip.sdc"
+    design = elaborate(parse_verilog([verilog]), parse_liberty(liberty), "opensta_roundtrip")
+
+    result = audit(
+        design,
+        [ModeInput("default", [str(sdc)])],
+        AuditOptions(report_implicit_waveform=False),
+    )
+
+    assert result.diagnostics == []
+    assert len(result.modes) == 1
+    coverage = result.modes[0].coverage
+    assert (coverage.score, coverage.grade) == (100.0, "A")
+    assert result.modes[0].clocks["core_clk"].waveform is None
+    assert result.modes[0].clocks["core_clk"].effective_waveform == (0.0, 5.0)
+    assert result.modes[0].clocks["phase_clk"].waveform == (1.0, 3.0)
+    components = {component.key: component for component in coverage.components}
+    assert {
+        key: (component.covered, component.total, component.percentage, component.weight)
+        for key, component in components.items()
+    } == {
+        "sequential_endpoints": (1, 1, 100.0, 0.5),
+        "input_delays": (4, 4, 100.0, 0.2),
+        "output_delays": (4, 4, 100.0, 0.2),
+        "query_health": (5, 5, 100.0, 0.1),
+    }
+
+
+def test_semantic_snapshot_normalizes_implicit_primary_clock_waveform(audit_factory, design_factory) -> None:
+    implicit_sdc = """
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay 1 -clock core [get_ports {clk2 data spare}]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    explicit_sdc = """
+current_design top
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [get_ports {clk2 data spare}]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    result = audit_factory(implicit_sdc)
+    implicit = result.modes[0]
+    explicit = audit_factory(explicit_sdc).modes[0]
+
+    assert implicit.clocks["core"].waveform is None
+    assert implicit.clocks["core"].effective_waveform == (0.0, 5.0)
+    assert explicit.clocks["core"].waveform == explicit.clocks["core"].effective_waveform == (0.0, 5.0)
+    assert _mode_semantics(implicit) == _mode_semantics(explicit)
+    reported_clock = result.to_dict()["modes"][0]["clocks"][0]
+    assert reported_clock["waveform"] is None
+    assert reported_clock["waveform_explicit"] is False
+
+    mode = OpenSTAModeResult(
+        mode="default",
+        sdc_paths=("constraints.sdc",),
+        version="OpenSTA 3.1.0",
+        command=("sta", "validate.tcl"),
+        stdout="",
+        stderr="",
+        returncode=0,
+        timed_out=False,
+        duration_seconds=0.1,
+        effective_sdc=explicit_sdc,
+        effective_sdc_sha256=sha256(explicit_sdc.encode()).hexdigest(),
+    )
+    validation = OpenSTAValidationResult(
+        config=OpenSTAConfig("sta", 10, ("top.v",), ("cells.lib",), "top"),
+        version="OpenSTA 3.1.0",
+        modes=(mode,),
+    )
+
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    effective_audit = result.summary["opensta"]["modes"][0]["effective_audit"]
+    assert effective_audit["semantic_match"] is True
+    assert effective_audit["static_semantic_sha256"] == effective_audit["effective_semantic_sha256"]
+
+
+@pytest.mark.parametrize("period", [0.0, float("nan"), float("inf")])
+def test_effective_waveform_rejects_invalid_implicit_primary_period(period: float) -> None:
+    clock = Clock("core", {"clk"}, period, None, False, SourceLocation("constraints.sdc"))
+
+    assert clock.effective_waveform is None
+
+
+def test_effective_waveform_never_relabels_invalid_explicit_primary() -> None:
+    clock = Clock("core", {"clk"}, 10.0, None, True, SourceLocation("constraints.sdc"))
+
+    assert clock.effective_waveform is None
+
+
+def test_effective_waveform_preserves_derived_generated_clock() -> None:
+    clock = Clock(
+        "div2",
+        {"u_ff/CLK"},
+        20.0,
+        (0.0, 10.0),
+        False,
+        SourceLocation("constraints.sdc"),
+        generated=True,
+    )
+
+    assert clock.effective_waveform == (0.0, 10.0)
+
+
+def test_effective_waveform_never_synthesizes_invalid_generated_clock() -> None:
+    clock = Clock(
+        "broken",
+        {"u_ff/CLK"},
+        20.0,
+        None,
+        False,
+        SourceLocation("constraints.sdc"),
+        generated=True,
+    )
+
+    assert clock.effective_waveform is None
 
 
 def test_successful_multi_mode_validation_is_isolated_and_captured(
@@ -178,6 +310,83 @@ def test_nonzero_check_result_preserves_output_and_effective_sdc(
     assert mode.effective_sdc_hash == sha256(payload).hexdigest()
 
 
+def test_effective_sdc_accepts_snapshot_at_exact_size_limit(tmp_path: Path) -> None:
+    snapshot = tmp_path / "effective.sdc"
+    payload = b"#" * opensta.MAX_EFFECTIVE_SDC_BYTES
+    snapshot.write_bytes(payload)
+
+    text, digest, failure_reason = opensta._effective_sdc(snapshot)
+
+    assert text is not None
+    assert len(text) == opensta.MAX_EFFECTIVE_SDC_BYTES
+    assert digest == sha256(payload).hexdigest()
+    assert failure_reason is None
+
+
+def test_oversize_effective_sdc_fails_without_payload_hash_or_reaudit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    audit_factory,
+    design_factory,
+) -> None:
+    verilog, liberty, functional_sdc, _ = _inputs(tmp_path)
+    fake_binary = str((tmp_path / "sta").resolve())
+    oversize_payload = b"#" * (opensta.MAX_EFFECTIVE_SDC_BYTES + 1)
+
+    monkeypatch.setattr(opensta.shutil, "which", lambda _candidate: fake_binary)
+    monkeypatch.setattr(
+        opensta,
+        "sha256",
+        lambda _payload: pytest.fail("oversize snapshot must not be hashed"),
+    )
+
+    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ("-version",):
+            return subprocess.CompletedProcess(command, 0, "OpenSTA 3.0.1\n", "")
+        Path(command[-1]).with_name("effective.sdc").write_bytes(oversize_payload)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(opensta.subprocess, "run", run)
+    validation = validate_with_opensta(
+        [verilog], [liberty], "top", {"functional": functional_sdc}, binary="sta", timeout=3.0
+    )
+    mode = validation.modes[0]
+
+    assert not mode.succeeded
+    assert mode.effective_sdc is None
+    assert mode.effective_sdc_sha256 is None
+    assert mode.failure_reason is not None
+    assert "exceeds the 16 MiB" in mode.failure_reason
+
+    result = audit_factory("create_clock -name core -period 10 [get_ports clk]\n")
+    monkeypatch.setattr(
+        cli,
+        "audit_sdc_text",
+        lambda *_args, **_kwargs: pytest.fail("oversize snapshot must not be re-audited"),
+    )
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC6001")
+    assert "failed: OpenSTA effective SDC snapshot exceeds the 16 MiB" in finding.message
+    assert finding.evidence["failure_reason"] == mode.failure_reason
+    public_mode = result.summary["opensta"]["modes"][0]
+    assert public_mode["effective_sdc_sha256"] is None
+    assert public_mode["effective_audit"] is None
+    assert public_mode["failure_reason"] == mode.failure_reason
+
+
+def test_effective_sdc_rejects_invalid_utf8_without_hash(tmp_path: Path) -> None:
+    snapshot = tmp_path / "effective.sdc"
+    snapshot.write_bytes(b"create_clock \xff\n")
+
+    text, digest, failure_reason = opensta._effective_sdc(snapshot)
+
+    assert text is None
+    assert digest is None
+    assert failure_reason is not None
+    assert "not valid UTF-8" in failure_reason
+
+
 def test_mode_timeout_is_a_captured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     verilog, liberty, functional_sdc, _ = _inputs(tmp_path)
     fake_binary = str((tmp_path / "sta").resolve())
@@ -209,3 +418,43 @@ def test_mode_timeout_is_a_captured_result(tmp_path: Path, monkeypatch: pytest.M
     assert mode.stderr == "partial stderr"
     assert mode.effective_sdc is None
     assert mode.effective_sdc_sha256 is None
+
+
+def test_successful_effective_sdc_is_reaudited_and_new_findings_are_merged(audit_factory, design_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [all_inputs]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    )
+    effective_sdc = "create_clock -name core -period 10 -waveform {0 5} [get_ports clk]\n"
+    mode = OpenSTAModeResult(
+        mode="default",
+        sdc_paths=("constraints.sdc",),
+        version="OpenSTA 3.0.1",
+        command=("sta", "validate.tcl"),
+        stdout="",
+        stderr="",
+        returncode=0,
+        timed_out=False,
+        duration_seconds=0.1,
+        effective_sdc=effective_sdc,
+        effective_sdc_sha256=sha256(effective_sdc.encode()).hexdigest(),
+    )
+    validation = OpenSTAValidationResult(
+        config=OpenSTAConfig("sta", 10, ("top.v",), ("cells.lib",), "top"),
+        version="OpenSTA 3.0.1",
+        modes=(mode,),
+    )
+
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    ids = {finding.rule_id for finding in result.diagnostics}
+    effective = result.summary["opensta"]["modes"][0]["effective_audit"]
+    assert {"OC3001", "OC3002"} <= ids
+    assert effective["diagnostic_count"] >= 2
+    assert effective["added_diagnostic_count"] >= 2
+    assert not effective["semantic_match"]
+    assert len(effective["static_semantic_sha256"]) == 64
+    assert len(effective["effective_semantic_sha256"]) == 64

@@ -1,6 +1,6 @@
 # OpenConstraint documentation
 
-OpenConstraint v0.2.0-beta performs deterministic, static checks over a
+OpenConstraint v0.3.0-beta performs deterministic, static checks over a
 documented subset of structural Verilog, Liberty, and Tcl/SDC. It is intended
 for lint, review, and CI coverage feedback. It is not a static-timing sign-off
 engine and does not prove timing exceptions.
@@ -13,6 +13,7 @@ engine and does not prove timing exceptions.
 - [Coverage methodology](coverage-methodology.md)
 - [Report formats](report-formats.md)
 - [CI integration](ci-integration.md)
+- [Diagnostic baselines and reviewable waivers](adoption-controls.md)
 - [Named-mode comparison](modes.md)
 - [Opt-in OpenSTA validation](opensta-validation.md)
 - [Public-design benchmark method](../benchmarks/README.md)
@@ -21,6 +22,7 @@ engine and does not prove timing exceptions.
 ## Understand the boundary
 
 - [Compatibility and parser subsets](compatibility.md)
+- [Competitive position and evidence bar](competitive-position.md)
 - [Security model](security-model.md)
 - [Architecture](architecture.md)
 - [Project roadmap](../ROADMAP.md)
@@ -32,8 +34,10 @@ engine and does not prove timing exceptions.
 - [Support](../SUPPORT.md)
 - [Security reporting](../SECURITY.md)
 
-Machine-readable report schema:
+Machine-readable schemas:
 
 ```console
 openconstraint schema --output openconstraint-report.schema.json
+openconstraint schema --kind waivers --output openconstraint-waivers.schema.json
+openconstraint schema --kind baseline --output openconstraint-diagnostic-baseline.schema.json
 ```

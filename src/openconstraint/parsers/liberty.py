@@ -1,8 +1,9 @@
 """Small, dependency-free Liberty parser for structural cell metadata.
 
 The parser intentionally extracts only information needed by the static audit:
-cell names, pin directions, sequential state expressions, and clock pins.  It
-accepts ordinary Liberty group/attribute syntax and ignores unrelated content.
+cell names, pin directions, sequential state expressions, clock pins, and
+combinational input/output dependencies.  It accepts ordinary Liberty
+group/attribute syntax and ignores unrelated content.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ class CellSpec:
     sequential: bool = False
     data_pins: set[str] = field(default_factory=set)
     clock_pins: set[str] = field(default_factory=set)
+    combinational_dependencies: dict[str, set[str]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -204,6 +206,25 @@ def _identifiers(expression: str) -> set[str]:
     return {token for token in re.findall(r"[A-Za-z_][A-Za-z0-9_$]*", expression) if token.lower() not in ignored}
 
 
+def _pin_tokens(expression: str) -> set[str]:
+    ignored = {"and", "or", "not", "true", "false", "posedge", "negedge"}
+    whitespace_tokens = {item.strip('{},"') for item in re.split(r"[\s,]+", expression) if item}
+    expression_tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_$]*(?:\[[^\]]+\])?", expression))
+    return {item for item in whitespace_tokens | expression_tokens if item.lower() not in ignored}
+
+
+def _pin_references(expression: str, candidates: set[str]) -> set[str]:
+    """Return pin names referenced by a Liberty expression or related-pin list.
+
+    Checking against the declared pin inventory avoids interpreting Liberty
+    operators and internal state variables as cell pins.  Exact whitespace
+    tokens cover escaped identifiers; identifier extraction covers ordinary
+    Boolean functions and bus-bit spellings.
+    """
+
+    return _pin_tokens(expression) & candidates
+
+
 def parse_liberty_text(text: str) -> CellLibrary:
     tokens, truncated = _tokenize(text)
     parser = _LibertyParser(tokens, truncated=truncated)
@@ -215,7 +236,8 @@ def parse_liberty_text(text: str) -> CellLibrary:
         name = cell_node.args[0]
         pin_directions: dict[str, str] = {}
         clock_pins: set[str] = set()
-        for pin_node in [child for child in cell_node.children if child.kind in {"pin", "bus"}]:
+        pin_nodes = [child for child in cell_node.children if child.kind in {"pin", "bus"}]
+        for pin_node in pin_nodes:
             if not pin_node.args:
                 continue
             pin_name = pin_node.args[0]
@@ -235,12 +257,39 @@ def parse_liberty_text(text: str) -> CellLibrary:
                 clock_pins.update(_identifiers(group.attrs.get(key, "")))
         data_pins.intersection_update(pin_directions)
         clock_pins.intersection_update(pin_directions)
+        input_pins = {pin_name for pin_name, direction in pin_directions.items() if direction in {"input", "inout"}}
+        combinational_dependencies: dict[str, set[str]] = {}
+        if not sequential_groups:
+            for pin_node in pin_nodes:
+                if not pin_node.args:
+                    continue
+                output_name = pin_node.args[0]
+                if pin_directions.get(output_name) not in {"output", "inout"}:
+                    continue
+                dependencies: set[str] = set()
+                function = pin_node.attrs.get("function")
+                if function is not None:
+                    function_references = _pin_references(function, input_pins)
+                    dependencies.update(function_references)
+                    # Retain an explicitly constant function as a known output
+                    # with no combinational input dependency, but do not treat
+                    # an unrecognized identifier as a proven constant.
+                    if function_references or not _pin_tokens(function):
+                        combinational_dependencies[output_name] = dependencies
+                for timing in (child for child in pin_node.children if child.kind == "timing"):
+                    related_pin = timing.attrs.get("related_pin")
+                    if related_pin is not None:
+                        timing_references = _pin_references(related_pin, input_pins)
+                        dependencies.update(timing_references)
+                        if timing_references:
+                            combinational_dependencies[output_name] = dependencies
         library.cells[name] = CellSpec(
             name=name,
             pin_directions=pin_directions,
             sequential=bool(sequential_groups),
             data_pins=data_pins,
             clock_pins=clock_pins,
+            combinational_dependencies=combinational_dependencies,
         )
     if parser.truncated:
         library.warnings.append(LIBERTY_TRUNCATION_WARNING)

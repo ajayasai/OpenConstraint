@@ -32,13 +32,67 @@ jobs:
           cp examples/tiny/expected-modes/openconstraint-report.html _site/index.html
           cp examples/tiny/expected-broken/openconstraint-report.html _site/broken.html
           cp src/openconstraint/schemas/openconstraint-report.schema.json _site/schemas/openconstraint-report.schema.json
+          cp src/openconstraint/schemas/openconstraint-waivers.schema.json _site/schemas/openconstraint-waivers.schema.json
+          cp src/openconstraint/schemas/openconstraint-diagnostic-baseline.schema.json _site/schemas/openconstraint-diagnostic-baseline.schema.json
           cp benchmarks/manifest.json benchmarks/baseline.json _site/benchmarks/
           cp benchmarks/overlays/*.sdc _site/benchmarks/overlays/
           cp benchmarks/schemas/manifest.schema.json _site/schemas/benchmark-manifest.schema.json
           cp benchmarks/schemas/fetch.schema.json _site/schemas/benchmark-fetch.schema.json
           cp benchmarks/schemas/result.schema.json _site/schemas/benchmark-result.schema.json
           cp benchmarks/schemas/baseline.schema.json _site/schemas/benchmark-baseline.schema.json
+          cp benchmarks/accuracy/schemas/truth-set.schema.json _site/schemas/accuracy-truth-set.schema.json
+          cp benchmarks/accuracy/schemas/result.schema.json _site/schemas/accuracy-result.schema.json
           touch _site/.nojekyll
+
+      - name: Verify public schema inventory and identities
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "src")
+          from openconstraint.benchmark import load_baseline, load_manifest
+
+          schema_directory = Path("_site/schemas")
+          expected = {
+              "accuracy-result.schema.json",
+              "accuracy-truth-set.schema.json",
+              "benchmark-baseline.schema.json",
+              "benchmark-fetch.schema.json",
+              "benchmark-manifest.schema.json",
+              "benchmark-result.schema.json",
+              "openconstraint-diagnostic-baseline.schema.json",
+              "openconstraint-report.schema.json",
+              "openconstraint-waivers.schema.json",
+          }
+          published = {path.name for path in schema_directory.glob("*.schema.json")}
+          assert published == expected, {"expected": sorted(expected), "published": sorted(published)}
+
+          base_url = "https://ajayasai.github.io/OpenConstraint/schemas/"
+          for name in sorted(expected):
+              payload = json.loads((schema_directory / name).read_text(encoding="utf-8"))
+              assert payload["$id"] == f"{base_url}{name}", {
+                  "file": name,
+                  "$id": payload.get("$id"),
+              }
+
+          manifest = load_manifest("benchmarks/manifest.json")
+          baseline = load_baseline("benchmarks/baseline.json", manifest)
+          expected_cases = {
+              f"{dataset.dataset_id}/{case.case_id}"
+              for dataset in manifest.datasets
+              for case in dataset.cases
+          }
+          assert set(baseline) == expected_cases, {
+              "baseline": sorted(baseline),
+              "manifest": sorted(expected_cases),
+          }
+          for metadata in manifest.suite_files.values():
+              source = manifest.path.parent / metadata.path
+              assert source.stat().st_size == metadata.size_bytes, source
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == metadata.sha256, source
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

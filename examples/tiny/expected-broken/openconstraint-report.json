@@ -52,9 +52,13 @@
     },
     {
       "evidence": {
+        "matched_count": 0,
         "object_kind": "ports",
         "query": "[get_ports missing_clk]",
-        "universe_size": 8
+        "universe_size": 8,
+        "unmatched_patterns": [
+          "missing_clk"
+        ]
       },
       "fingerprint": "8e9fcf3d27dd592952ee",
       "location": {
@@ -67,7 +71,7 @@
       "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows.",
       "rule_id": "OC1001",
       "severity": "error",
-      "suggestion": "Correct the pattern or hierarchy and confirm the intended object exists in this mode."
+      "suggestion": "Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
     },
     {
       "evidence": {
@@ -86,6 +90,26 @@
       "rule_id": "OC2001",
       "severity": "error",
       "suggestion": "Add -period for a primary clock or fix the generated-clock master/source relationship."
+    },
+    {
+      "evidence": {
+        "clock": "ghost_clock",
+        "problems": [
+          "the supplied clock target collection is empty"
+        ]
+      },
+      "fingerprint": "a68692a96ba2684ed594",
+      "location": {
+        "column": 1,
+        "line": 2,
+        "path": "examples/tiny/broken.sdc"
+      },
+      "message": "Primary clock definition is invalid",
+      "mode": "default",
+      "rationale": "A malformed clock identity or target can create an unintended virtual clock or additive definition.",
+      "rule_id": "OC2006",
+      "severity": "error",
+      "suggestion": "Provide a stable -name, use -add only with that name, and resolve every supplied target."
     },
     {
       "evidence": {
@@ -138,9 +162,13 @@
     },
     {
       "evidence": {
+        "matched_count": 0,
         "object_kind": "pins",
         "query": "[get_pins u_missing/CLK]",
-        "universe_size": 12
+        "universe_size": 12,
+        "unmatched_patterns": [
+          "u_missing/CLK"
+        ]
       },
       "fingerprint": "0834c05a44c5084f20c4",
       "location": {
@@ -153,7 +181,7 @@
       "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows.",
       "rule_id": "OC1001",
       "severity": "error",
-      "suggestion": "Correct the pattern or hierarchy and confirm the intended object exists in this mode."
+      "suggestion": "Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
     },
     {
       "evidence": {
@@ -208,6 +236,27 @@
       "rule_id": "OC2011",
       "severity": "error",
       "suggestion": "Fix -source/-master_clock or the netlist clock path; inspect the HTML clock graph."
+    },
+    {
+      "evidence": {
+        "clock": "divided",
+        "problems": [
+          "-source must resolve to exactly one port or pin"
+        ],
+        "source_targets": []
+      },
+      "fingerprint": "51fa1a4fe03941f2a682",
+      "location": {
+        "column": 1,
+        "line": 4,
+        "path": "examples/tiny/broken.sdc"
+      },
+      "message": "Generated clock source or target cardinality is invalid",
+      "mode": "default",
+      "rationale": "A generated clock needs one unambiguous source port/pin and a nonempty target collection.",
+      "rule_id": "OC2012",
+      "severity": "error",
+      "suggestion": "Narrow -source to one port or pin and resolve the generated-clock target collection."
     },
     {
       "evidence": {
@@ -304,33 +353,44 @@
       "rule_id": "OC4001",
       "severity": "error",
       "suggestion": "Narrow the collections or keep one constraint that states the intended timing policy."
+    },
+    {
+      "evidence": {
+        "expected_hold_multiplier": 1,
+        "setup_multiplier": 2
+      },
+      "fingerprint": "c653e4eb148b997c95f5",
+      "location": {
+        "column": 1,
+        "line": 7,
+        "path": "examples/tiny/broken.sdc"
+      },
+      "message": "Multicycle path applies multiplier 2 to both setup and hold",
+      "mode": "default",
+      "rationale": "Applying one multiplier to both checks commonly shifts hold too far and can hide a real short-path failure.",
+      "rule_id": "OC4011",
+      "severity": "warning",
+      "suggestion": "State setup and hold separately; the usual same-clock pairing is setup N with hold N-1."
     }
   ],
   "modes": [
     {
       "clocks": [
         {
+          "combinational": false,
+          "divide_by": null,
+          "duty_cycle": null,
+          "edge_shift": null,
+          "edges": null,
           "generated": false,
-          "location": {
-            "column": 1,
-            "line": 2,
-            "path": "examples/tiny/broken.sdc"
-          },
-          "master_clock": null,
-          "name": "ghost_clock",
-          "period": null,
-          "source_targets": [],
-          "targets": [],
-          "waveform": null
-        },
-        {
-          "generated": false,
+          "invert": false,
           "location": {
             "column": 1,
             "line": 3,
             "path": "examples/tiny/broken.sdc"
           },
           "master_clock": null,
+          "multiply_by": null,
           "name": "all_ports",
           "period": 8.0,
           "source_targets": [],
@@ -344,23 +404,57 @@
             "scan_clk",
             "scan_en"
           ],
-          "waveform": null
+          "valid": true,
+          "waveform": null,
+          "waveform_explicit": false
         },
         {
+          "combinational": false,
+          "divide_by": 2,
+          "duty_cycle": null,
+          "edge_shift": null,
+          "edges": null,
           "generated": true,
+          "invert": false,
           "location": {
             "column": 1,
             "line": 4,
             "path": "examples/tiny/broken.sdc"
           },
           "master_clock": null,
+          "multiply_by": null,
           "name": "divided",
           "period": null,
           "source_targets": [],
           "targets": [
             "u_ff0/Q"
           ],
-          "waveform": null
+          "valid": false,
+          "waveform": null,
+          "waveform_explicit": false
+        },
+        {
+          "combinational": false,
+          "divide_by": null,
+          "duty_cycle": null,
+          "edge_shift": null,
+          "edges": null,
+          "generated": false,
+          "invert": false,
+          "location": {
+            "column": 1,
+            "line": 2,
+            "path": "examples/tiny/broken.sdc"
+          },
+          "master_clock": null,
+          "multiply_by": null,
+          "name": "ghost_clock",
+          "period": null,
+          "source_targets": [],
+          "targets": [],
+          "valid": false,
+          "waveform": null,
+          "waveform_explicit": false
         }
       ],
       "coverage": {
@@ -376,25 +470,25 @@
           },
           {
             "covered": 0,
-            "explanation": "Non-clock input/inout ports matched by at least one set_input_delay.",
+            "explanation": "Min/max by rise/fall slots covered for each required input port and I/O relationship.",
             "key": "input_delays",
             "label": "Input-delay coverage",
             "percentage": 0.0,
-            "total": 3,
+            "total": 12,
             "weight": 0.2
           },
           {
             "covered": 0,
-            "explanation": "Output/inout ports matched by at least one set_output_delay.",
+            "explanation": "Min/max by rise/fall slots covered for each required output port and I/O relationship.",
             "key": "output_delays",
             "label": "Output-delay coverage",
             "percentage": 0.0,
-            "total": 2,
+            "total": 8,
             "weight": 0.2
           },
           {
             "covered": 6,
-            "explanation": "Static SDC object queries that resolve to at least one design object.",
+            "explanation": "All parsed SDC object queries that resolve completely to at least one design object.",
             "key": "query_health",
             "label": "Resolvable object queries",
             "percentage": 75.0,
@@ -449,9 +543,13 @@
         },
         {
           "evidence": {
+            "matched_count": 0,
             "object_kind": "ports",
             "query": "[get_ports missing_clk]",
-            "universe_size": 8
+            "universe_size": 8,
+            "unmatched_patterns": [
+              "missing_clk"
+            ]
           },
           "fingerprint": "8e9fcf3d27dd592952ee",
           "location": {
@@ -464,7 +562,7 @@
           "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows.",
           "rule_id": "OC1001",
           "severity": "error",
-          "suggestion": "Correct the pattern or hierarchy and confirm the intended object exists in this mode."
+          "suggestion": "Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
         },
         {
           "evidence": {
@@ -483,6 +581,26 @@
           "rule_id": "OC2001",
           "severity": "error",
           "suggestion": "Add -period for a primary clock or fix the generated-clock master/source relationship."
+        },
+        {
+          "evidence": {
+            "clock": "ghost_clock",
+            "problems": [
+              "the supplied clock target collection is empty"
+            ]
+          },
+          "fingerprint": "a68692a96ba2684ed594",
+          "location": {
+            "column": 1,
+            "line": 2,
+            "path": "examples/tiny/broken.sdc"
+          },
+          "message": "Primary clock definition is invalid",
+          "mode": "default",
+          "rationale": "A malformed clock identity or target can create an unintended virtual clock or additive definition.",
+          "rule_id": "OC2006",
+          "severity": "error",
+          "suggestion": "Provide a stable -name, use -add only with that name, and resolve every supplied target."
         },
         {
           "evidence": {
@@ -535,9 +653,13 @@
         },
         {
           "evidence": {
+            "matched_count": 0,
             "object_kind": "pins",
             "query": "[get_pins u_missing/CLK]",
-            "universe_size": 12
+            "universe_size": 12,
+            "unmatched_patterns": [
+              "u_missing/CLK"
+            ]
           },
           "fingerprint": "0834c05a44c5084f20c4",
           "location": {
@@ -550,7 +672,7 @@
           "rationale": "A constraint on an empty collection is silently ineffective in common SDC flows.",
           "rule_id": "OC1001",
           "severity": "error",
-          "suggestion": "Correct the pattern or hierarchy and confirm the intended object exists in this mode."
+          "suggestion": "Correct every unmatched pattern or hierarchy and confirm each intended object exists in this mode."
         },
         {
           "evidence": {
@@ -605,6 +727,27 @@
           "rule_id": "OC2011",
           "severity": "error",
           "suggestion": "Fix -source/-master_clock or the netlist clock path; inspect the HTML clock graph."
+        },
+        {
+          "evidence": {
+            "clock": "divided",
+            "problems": [
+              "-source must resolve to exactly one port or pin"
+            ],
+            "source_targets": []
+          },
+          "fingerprint": "51fa1a4fe03941f2a682",
+          "location": {
+            "column": 1,
+            "line": 4,
+            "path": "examples/tiny/broken.sdc"
+          },
+          "message": "Generated clock source or target cardinality is invalid",
+          "mode": "default",
+          "rationale": "A generated clock needs one unambiguous source port/pin and a nonempty target collection.",
+          "rule_id": "OC2012",
+          "severity": "error",
+          "suggestion": "Narrow -source to one port or pin and resolve the generated-clock target collection."
         },
         {
           "evidence": {
@@ -701,6 +844,24 @@
           "rule_id": "OC4001",
           "severity": "error",
           "suggestion": "Narrow the collections or keep one constraint that states the intended timing policy."
+        },
+        {
+          "evidence": {
+            "expected_hold_multiplier": 1,
+            "setup_multiplier": 2
+          },
+          "fingerprint": "c653e4eb148b997c95f5",
+          "location": {
+            "column": 1,
+            "line": 7,
+            "path": "examples/tiny/broken.sdc"
+          },
+          "message": "Multicycle path applies multiplier 2 to both setup and hold",
+          "mode": "default",
+          "rationale": "Applying one multiplier to both checks commonly shifts hold too far and can hide a real short-path failure.",
+          "rule_id": "OC4011",
+          "severity": "warning",
+          "suggestion": "State setup and hold separately; the usual same-clock pairing is setup N with hold N-1."
         }
       ],
       "exceptions": [
@@ -720,6 +881,22 @@
             "column": 1,
             "line": 6,
             "path": "examples/tiny/broken.sdc"
+          },
+          "qualifiers": {
+            "applies_to": [
+              "hold",
+              "setup"
+            ],
+            "definition_problems": [],
+            "definition_valid": true,
+            "end_transition": "rise_fall",
+            "from_specified": true,
+            "from_transition": "rise_fall",
+            "reset_path": false,
+            "scope_resolvable": true,
+            "through_transitions": [],
+            "to_specified": true,
+            "to_transition": "rise_fall"
           },
           "raw": "set_false_path -from [get_ports *] -to [get_pins */D]",
           "through": [],
@@ -744,6 +921,24 @@
             "column": 1,
             "line": 7,
             "path": "examples/tiny/broken.sdc"
+          },
+          "qualifiers": {
+            "applies_to": [
+              "hold",
+              "setup"
+            ],
+            "definition_problems": [],
+            "definition_valid": true,
+            "end_transition": "rise_fall",
+            "from_specified": true,
+            "from_transition": "rise_fall",
+            "multiplier": 2,
+            "reset_path": false,
+            "scope_resolvable": true,
+            "start_end": "default",
+            "through_transitions": [],
+            "to_specified": true,
+            "to_transition": "rise_fall"
           },
           "raw": "set_multicycle_path 2 -from [get_ports *] -to [get_pins */D]",
           "through": [],
@@ -794,11 +989,6 @@
             "kind": "defines",
             "source": "clock:all_ports",
             "target": "object:scan_en"
-          },
-          {
-            "kind": "defines",
-            "source": "clock:divided",
-            "target": "object:u_ff0/Q"
           },
           {
             "kind": "reaches",
@@ -958,21 +1148,6 @@
             "label": "scan_en"
           },
           {
-            "id": "clock:divided",
-            "kind": "generated_clock",
-            "label": "divided"
-          },
-          {
-            "id": "object:u_ff0/Q",
-            "kind": "target",
-            "label": "u_ff0/Q"
-          },
-          {
-            "id": "clock:ghost_clock",
-            "kind": "clock",
-            "label": "ghost_clock"
-          },
-          {
             "id": "endpoint_clock:u_ff0/CLK",
             "kind": "sequential_clock_pin",
             "label": "u_ff0/CLK"
@@ -1044,22 +1219,23 @@
           }
         ]
       },
+      "io_delays": [],
       "name": "default"
     }
   ],
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "summary": {
     "coverage": {
       "default": 57.5
     },
-    "diagnostic_count": 13,
-    "errors": 7,
+    "diagnostic_count": 16,
+    "errors": 9,
     "mode_count": 1,
     "notes": 1,
-    "warnings": 5
+    "warnings": 6
   },
   "tool": {
     "name": "OpenConstraint",
-    "version": "0.2.0b0"
+    "version": "0.3.0b0"
   }
 }

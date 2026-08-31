@@ -34,7 +34,9 @@ jobs:
   atheris:
     name: Atheris (${{ matrix.target }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The Tcl/SDC target deliberately explores work-bounded worst cases and
+    # can approach fourteen minutes for 20,000 mutations on shared runners.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +64,7 @@ jobs:
         run: |
           mkdir -p fuzz-artifacts
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            budget=(-max_total_time=300)
+            budget=(-max_total_time=1200)
           else
             budget=(-runs=20000)
           fi

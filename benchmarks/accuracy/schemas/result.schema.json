@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/accuracy-result.schema.json",
+  "title": "OpenConstraint semantic accuracy result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool", "suite", "fixture", "summary", "cases"],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "const": "OpenConstraint"
+        },
+        "version": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "truth_set_sha256"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "truth_set_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "top", "license"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "top": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spdx", "provenance"],
+          "properties": {
+            "spdx": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "provenance": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case_result"
+      }
+    }
+  },
+  "$defs": {
+    "nonempty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rule_id": {
+      "type": "string",
+      "pattern": "^OC[0-9]{4}$"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "count"],
+        "properties": {
+          "rule_id": {
+            "$ref": "#/$defs/rule_id"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "true_positives",
+        "false_positives",
+        "false_negatives",
+        "precision",
+        "recall",
+        "f1",
+        "exact_match",
+        "false_pass"
+      ],
+      "properties": {
+        "true_positives": {
+          "$ref": "#/$defs/count"
+        },
+        "false_positives": {
+          "$ref": "#/$defs/count"
+        },
+        "false_negatives": {
+          "$ref": "#/$defs/count"
+        },
+        "precision": {
+          "$ref": "#/$defs/ratio"
+        },
+        "recall": {
+          "$ref": "#/$defs/ratio"
+        },
+        "f1": {
+          "$ref": "#/$defs/ratio"
+        },
+        "exact_match": {
+          "type": "boolean"
+        },
+        "false_pass": {
+          "type": "boolean"
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_precision", "minimum_recall", "maximum_false_pass_rate"],
+      "properties": {
+        "minimum_precision": {
+          "$ref": "#/$defs/ratio"
+        },
+        "minimum_recall": {
+          "$ref": "#/$defs/ratio"
+        },
+        "maximum_false_pass_rate": {
+          "$ref": "#/$defs/ratio"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "case_count",
+        "defect_case_count",
+        "clean_case_count",
+        "exact_match_case_count",
+        "cases_with_misses",
+        "false_pass_cases",
+        "false_pass_rate",
+        "true_positives",
+        "false_positives",
+        "false_negatives",
+        "precision",
+        "recall",
+        "f1",
+        "tested_rule_ids",
+        "untested_rule_ids",
+        "thresholds"
+      ],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "case_count": {
+          "$ref": "#/$defs/count"
+        },
+        "defect_case_count": {
+          "$ref": "#/$defs/count"
+        },
+        "clean_case_count": {
+          "$ref": "#/$defs/count"
+        },
+        "exact_match_case_count": {
+          "$ref": "#/$defs/count"
+        },
+        "cases_with_misses": {
+          "$ref": "#/$defs/count"
+        },
+        "false_pass_cases": {
+          "$ref": "#/$defs/count"
+        },
+        "false_pass_rate": {
+          "$ref": "#/$defs/ratio"
+        },
+        "true_positives": {
+          "$ref": "#/$defs/count"
+        },
+        "false_positives": {
+          "$ref": "#/$defs/count"
+        },
+        "false_negatives": {
+          "$ref": "#/$defs/count"
+        },
+        "precision": {
+          "$ref": "#/$defs/ratio"
+        },
+        "recall": {
+          "$ref": "#/$defs/ratio"
+        },
+        "f1": {
+          "$ref": "#/$defs/ratio"
+        },
+        "tested_rule_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/rule_id"
+          }
+        },
+        "untested_rule_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/rule_id"
+          }
+        },
+        "thresholds": {
+          "$ref": "#/$defs/thresholds"
+        }
+      }
+    },
+    "case_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "execution",
+        "mutated_sdc_sha256",
+        "expected",
+        "observed",
+        "score"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "execution": {
+          "enum": ["mutant-only", "reference-and-mutant"]
+        },
+        "mutated_sdc_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "expected": {
+          "$ref": "#/$defs/labels"
+        },
+        "observed": {
+          "$ref": "#/$defs/labels"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    }
+  }
+}

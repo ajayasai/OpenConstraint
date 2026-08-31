@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/accuracy-truth-set.schema.json",
+  "title": "OpenConstraint semantic accuracy truth set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite",
+    "fixture",
+    "options",
+    "thresholds",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "top",
+        "verilog",
+        "liberty",
+        "sdc",
+        "license"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "top": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "verilog": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "liberty": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "sdc": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spdx", "provenance"],
+          "properties": {
+            "spdx": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "provenance": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "broad_match_count",
+        "broad_match_ratio",
+        "broad_match_min_universe",
+        "report_implicit_waveform"
+      ],
+      "properties": {
+        "broad_match_count": {
+          "$ref": "#/$defs/count"
+        },
+        "broad_match_ratio": {
+          "$ref": "#/$defs/ratio"
+        },
+        "broad_match_min_universe": {
+          "$ref": "#/$defs/count"
+        },
+        "report_implicit_waveform": {
+          "type": "boolean"
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_precision",
+        "minimum_recall",
+        "maximum_false_pass_rate"
+      ],
+      "properties": {
+        "minimum_precision": {
+          "$ref": "#/$defs/ratio"
+        },
+        "minimum_recall": {
+          "$ref": "#/$defs/ratio"
+        },
+        "maximum_false_pass_rate": {
+          "$ref": "#/$defs/ratio"
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "$comment": "The application loader additionally enforces uniqueness of the id field across non-identical case objects.",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "nonempty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "positive_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rule_id": {
+      "type": "string",
+      "pattern": "^OC[0-9]{4}$"
+    },
+    "append": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": {
+          "const": "append"
+        },
+        "text": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
+    "replace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "match", "replacement", "count"],
+      "properties": {
+        "kind": {
+          "const": "replace"
+        },
+        "match": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "count": {
+          "$ref": "#/$defs/positive_count"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "count"],
+      "properties": {
+        "rule_id": {
+          "$ref": "#/$defs/rule_id"
+        },
+        "count": {
+          "$ref": "#/$defs/positive_count"
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "execution", "mutations", "expected"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "execution": {
+          "enum": ["mutant-only", "reference-and-mutant"]
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/append"
+              },
+              {
+                "$ref": "#/$defs/replace"
+              }
+            ]
+          }
+        },
+        "expected": {
+          "type": "array",
+          "uniqueItems": true,
+          "$comment": "The application loader additionally enforces uniqueness of rule_id across entries with different counts.",
+          "items": {
+            "$ref": "#/$defs/expected"
+          }
+        }
+      }
+    }
+  }
+}

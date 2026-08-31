@@ -181,21 +181,57 @@
     "clock": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "targets", "period", "waveform", "generated", "source_targets", "master_clock"],
+      "required": [
+        "name",
+        "targets",
+        "period",
+        "waveform",
+        "waveform_explicit",
+        "valid",
+        "generated",
+        "source_targets",
+        "master_clock",
+        "divide_by",
+        "multiply_by",
+        "duty_cycle",
+        "invert",
+        "combinational",
+        "edges",
+        "edge_shift"
+      ],
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "period": {"type": ["number", "null"]},
         "waveform": {"type": ["array", "null"], "items": {"type": "number"}},
+        "waveform_explicit": {"type": "boolean"},
+        "valid": {"type": "boolean"},
         "generated": {"type": "boolean"},
         "source_targets": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-        "master_clock": {"type": ["string", "null"]}
+        "master_clock": {"type": ["string", "null"]},
+        "divide_by": {"type": ["integer", "null"], "minimum": 1},
+        "multiply_by": {"type": ["integer", "null"], "minimum": 1},
+        "duty_cycle": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "invert": {"type": "boolean"},
+        "combinational": {"type": "boolean"},
+        "edges": {
+          "oneOf": [
+            {"type": "array", "items": {"type": "integer", "minimum": 1}},
+            {"type": "null"}
+          ]
+        },
+        "edge_shift": {
+          "oneOf": [
+            {"type": "array", "items": {"type": "number"}},
+            {"type": "null"}
+          ]
+        }
       }
     },
     "exception": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "from", "to", "through"],
+      "required": ["kind", "from", "to", "through", "qualifiers"],
       "properties": {
         "kind": {"type": "string", "minLength": 1},
         "from": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
@@ -203,7 +239,30 @@
         "through": {
           "type": "array",
           "items": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        },
+        "qualifiers": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/jsonValue"}
         }
+      }
+    },
+    "ioDelay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ports", "value", "clocks", "reference_pin", "source_latency_included", "network_latency_included", "min_max", "transitions", "clock_edge", "additive", "valid"],
+      "properties": {
+        "kind": {"enum": ["input", "output"]},
+        "ports": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "value": {"type": ["number", "null"]},
+        "clocks": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "reference_pin": {"type": ["string", "null"]},
+        "source_latency_included": {"type": "boolean"},
+        "network_latency_included": {"type": "boolean"},
+        "min_max": {"type": "array", "items": {"enum": ["min", "max"]}, "uniqueItems": true},
+        "transitions": {"type": "array", "items": {"enum": ["rise", "fall"]}, "uniqueItems": true},
+        "clock_edge": {"enum": ["rise", "fall"]},
+        "additive": {"type": "boolean"},
+        "valid": {"type": "boolean"}
       }
     },
     "coverageComponent": {
@@ -234,10 +293,11 @@
     "mode": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["clocks", "exceptions", "coverage"],
+      "required": ["clocks", "exceptions", "io_delays", "coverage"],
       "properties": {
         "clocks": {"type": "array", "items": {"$ref": "#/$defs/clock"}},
         "exceptions": {"type": "array", "items": {"$ref": "#/$defs/exception"}},
+        "io_delays": {"type": "array", "items": {"$ref": "#/$defs/ioDelay"}},
         "coverage": {"$ref": "#/$defs/coverage"}
       }
     },

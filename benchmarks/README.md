@@ -18,19 +18,21 @@ with the surrounding platform license.
 
 Each upstream SDC invokes OpenROAD's custom `set_all_input_output_delays`
 procedure. OpenConstraint's safe static backend does not execute project Tcl,
-so the `upstream-static` mode reports 60% structural coverage and missing I/O
-delays at that parser boundary. Those diagnostics do **not** mean the upstream
-flow omitted its delays.
+so the `upstream-static` mode emits `OC0003` and reports `0/F` trusted coverage
+at that parser boundary. Those diagnostics do **not** mean the upstream flow
+omitted its delays; they mean the static backend cannot verify the helper's
+effect without executing it.
 
-The same case also has a `coverage-reference` mode that appends a small,
-checked-in SDC overlay under [`overlays/`](overlays/). It applies the helper's
-documented 20%-of-period values to `all_inputs` and `all_outputs`, producing a
-100% OpenConstraint coverage reference. This is deliberately **not** described
-as collection-equivalent or sign-off SDC: OpenROAD's helper removes clocks from
-`all_inputs`, while the overlay selects them and OpenConstraint's input-delay
-coverage denominator separately excludes resolved clock ports. Keeping both
-modes in one case avoids reparsing the large design and makes the static Tcl
-boundary explicit without claiming formal semantic equivalence.
+The same case also has a `coverage-reference` mode that uses a small,
+self-contained checked-in SDC under [`overlays/`](overlays/). It recreates the
+upstream primary clock and applies the helper's documented 20%-of-period values
+to explicit non-clock input patterns and `all_outputs`, producing a 100%
+OpenConstraint coverage reference. This is
+deliberately **not** described as collection-equivalent or sign-off SDC: the
+patterns are reviewed static surrogates for a project Tcl helper, not an
+execution of that helper. Keeping both modes in one case avoids reparsing the
+large design and makes the fail-closed static Tcl boundary explicit without
+claiming formal semantic equivalence.
 
 ## Reproduce a run
 
@@ -76,6 +78,23 @@ network, fails if the exact blob is absent, and can safely rebuild a missing or
 damaged materialization from that blob. Online acquisition uses HTTPS, caps the
 download at the pinned byte count, rejects a redirect away from HTTPS, downloads
 to a temporary file, and publishes it atomically only after verification.
+Fetch, run, and baseline outputs may not resolve to the cache directory or any
+path beneath it. An early check covers the declared and resolved cache and its
+fixed `artifacts` and `sources` layers before manifest loading. After selection,
+the checker additionally protects the exact required blobs, digest roots, and
+materialization roots without walking the cache tree. Same-entry versus
+hard-link disambiguation, when needed, probes at most 4,096 sibling names. The
+selected cache root is then created and the checker runs again before any
+acquisition or analysis. This makes case- and Unicode-normalization aliases
+observable even when a suite-only selection needs no artifact. A final check
+runs after acquisition or analysis, immediately before report publication. With
+stable, trusted cache and output-parent directories, these checks prevent a
+report from replacing selected cache state. Reports are then published by
+atomic same-directory replacement, which prevents an output hard-linked from
+outside the cache from truncating the cached inode. The checks do not defend
+against a concurrent process that can replace an ancestor between the final
+validation and replacement; do not use cache or output parents writable by
+other users.
 
 The 12.8 MB Liberty blob exceeds GitHub's direct raw-file limit, so its immutable
 Contents API URL is fetched with GitHub's documented raw media type. The other,

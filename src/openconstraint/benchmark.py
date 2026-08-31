@@ -30,7 +30,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from openconstraint.engine import AuditOptions, ModeInput, audit
-from openconstraint.model import AuditResult, Design, Diagnostic
+from openconstraint.model import AuditResult, Design, Diagnostic, effective_io_delay_semantics
 from openconstraint.parsers.liberty import CellLibrary, parse_liberty
 from openconstraint.parsers.verilog import elaborate, parse_verilog
 from openconstraint.version import __version__
@@ -41,6 +41,9 @@ BASELINE_SCHEMA_VERSION = "1.0.0"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_ARCHIVE_ENTRIES = 100_000
+_MAX_JSON_BYTES = 64 * 1024 * 1024
+_MAX_JSON_DEPTH = 256
+_MAX_JSON_NODES = 1_000_000
 _WINDOWS_RESERVED_NAMES = {
     "aux",
     "con",
@@ -88,6 +91,16 @@ class Artifact:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactCachePaths:
+    """Content-addressed cache locations derived from one artifact record."""
+
+    blob: Path
+    digest_root: Path
+    materialization_root: Path
+    logical_root: Path
+
+
+@dataclass(frozen=True, slots=True)
 class InputReference:
     origin: str
     path: str
@@ -126,6 +139,52 @@ class BenchmarkManifest:
 
 def _reject_constant(value: str) -> None:
     raise BenchmarkError(f"non-finite JSON number {value!r} is not allowed")
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> JsonObject:
+    result: JsonObject = {}
+    for key, value in pairs:
+        if key in result:
+            raise BenchmarkError(f"duplicate JSON key {key!r} is not allowed")
+        result[key] = value
+    return result
+
+
+def _validate_json_shape(value: object, label: str) -> None:
+    """Bound nested/container work before schema-specific traversal."""
+
+    stack: list[tuple[object, int]] = [(value, 1)]
+    nodes = 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if nodes > _MAX_JSON_NODES:
+            raise BenchmarkError(f"{label} exceeds the JSON node limit of {_MAX_JSON_NODES}")
+        if depth > _MAX_JSON_DEPTH:
+            raise BenchmarkError(f"{label} exceeds the JSON nesting limit of {_MAX_JSON_DEPTH}")
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+
+
+def _load_json(path: Path, label: str) -> object:
+    try:
+        size = path.stat().st_size
+        if size > _MAX_JSON_BYTES:
+            raise BenchmarkError(f"{label} exceeds the JSON size limit of {_MAX_JSON_BYTES} bytes")
+        text = path.read_text(encoding="utf-8")
+        value = json.loads(
+            text,
+            parse_constant=_reject_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except json.JSONDecodeError as error:
+        raise BenchmarkError(f"invalid {label} JSON: {error}") from error
+    except RecursionError as error:
+        raise BenchmarkError(f"{label} exceeds the JSON nesting limit of {_MAX_JSON_DEPTH}") from error
+    _validate_json_shape(value, label)
+    return value
 
 
 def _object(value: object, where: str) -> JsonObject:
@@ -350,10 +409,7 @@ def load_manifest(path: str | Path) -> BenchmarkManifest:
     """Load and strictly validate one benchmark manifest."""
 
     manifest_path = Path(path).resolve()
-    try:
-        raw = json.loads(manifest_path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
-    except json.JSONDecodeError as error:
-        raise BenchmarkError(f"invalid benchmark manifest JSON: {error}") from error
+    raw = _load_json(manifest_path, "benchmark manifest")
     root = _object(raw, "manifest")
     _known_keys(root, {"schema_version", "suite", "suite_files", "datasets"}, "manifest")
     version = _string(root.get("schema_version"), "manifest.schema_version")
@@ -683,6 +739,38 @@ def _extract_raw(blob: Path, destination: Path, artifact: Artifact) -> None:
     shutil.copyfile(blob, target)
 
 
+def _artifact_cache_marker(artifact: Artifact) -> JsonObject:
+    """Return the extraction settings bound into a materialization key."""
+
+    return {
+        "archive": artifact.archive,
+        "filename": artifact.filename,
+        "sha256": artifact.sha256,
+        "size_bytes": artifact.size_bytes,
+        "strip_prefix": artifact.strip_prefix,
+        "unpacked_size_limit_bytes": artifact.unpacked_size_limit_bytes,
+    }
+
+
+def artifact_cache_paths(artifact: Artifact, cache_dir: str | Path) -> ArtifactCachePaths:
+    """Derive the exact cache paths used to acquire and materialize an artifact."""
+
+    cache = Path(cache_dir).resolve()
+    marker = _artifact_cache_marker(artifact)
+    materialization = hashlib.sha256(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    digest_root = cache / "sources" / artifact.sha256
+    materialization_root = digest_root / materialization
+    logical_root = materialization_root / artifact.strip_prefix if artifact.strip_prefix else materialization_root
+    return ArtifactCachePaths(
+        blob=cache / "artifacts" / f"{artifact.sha256}.blob",
+        digest_root=digest_root,
+        materialization_root=materialization_root,
+        logical_root=logical_root,
+    )
+
+
 def acquire_artifact(
     artifact: Artifact,
     cache_dir: str | Path,
@@ -692,12 +780,12 @@ def acquire_artifact(
 ) -> Path:
     """Verify/download and safely extract an artifact, returning its logical root."""
 
-    cache = Path(cache_dir).resolve()
-    artifact_dir = cache / "artifacts"
-    source_parent = cache / "sources"
+    paths = artifact_cache_paths(artifact, cache_dir)
+    artifact_dir = paths.blob.parent
+    source_parent = paths.digest_root.parent
     artifact_dir.mkdir(parents=True, exist_ok=True)
     source_parent.mkdir(parents=True, exist_ok=True)
-    blob = artifact_dir / f"{artifact.sha256}.blob"
+    blob = paths.blob
     if blob.exists():
         problem = _validate_blob(blob, artifact)
         if problem:
@@ -721,24 +809,16 @@ def acquire_artifact(
         finally:
             temporary.unlink(missing_ok=True)
 
-    expected_marker = {
-        "archive": artifact.archive,
-        "filename": artifact.filename,
-        "sha256": artifact.sha256,
-        "size_bytes": artifact.size_bytes,
-        "strip_prefix": artifact.strip_prefix,
-        "unpacked_size_limit_bytes": artifact.unpacked_size_limit_bytes,
-    }
-    materialization = hashlib.sha256(
-        json.dumps(expected_marker, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()[:16]
-    extracted = source_parent / artifact.sha256 / materialization
+    expected_marker = _artifact_cache_marker(artifact)
+    extracted = paths.materialization_root
     extracted.parent.mkdir(parents=True, exist_ok=True)
     marker = extracted / ".openconstraint-artifact.json"
     if marker.is_file() and not marker.is_symlink() and not _is_junction(marker):
+        marker_value: JsonObject | None
         try:
-            marker_value = json.loads(marker.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            loaded_marker = _load_json(marker, "benchmark cache marker")
+            marker_value = loaded_marker if isinstance(loaded_marker, dict) else None
+        except (OSError, UnicodeError, BenchmarkError):
             marker_value = None
         logical_root = extracted / artifact.strip_prefix if artifact.strip_prefix else extracted
         expected_marker_keys = {*expected_marker, "materialized_sha256"}
@@ -748,7 +828,7 @@ def acquire_artifact(
             and all(marker_value.get(key) == value for key, value in expected_marker.items())
             and logical_root.is_dir()
         )
-        if materialization_valid:
+        if materialization_valid and marker_value is not None:
             try:
                 materialization_valid = marker_value["materialized_sha256"] == _materialization_sha256(extracted)
             except (OSError, BenchmarkError):
@@ -818,6 +898,24 @@ def _required_artifact_ids(case: BenchmarkCase) -> set[str]:
     return {reference.origin for reference in references if reference.origin != "suite"}
 
 
+def selected_required_artifacts(
+    manifest: BenchmarkManifest,
+    dataset_ids: Iterable[str] | None = None,
+    case_ids: Iterable[str] | None = None,
+) -> tuple[tuple[Dataset, Artifact], ...]:
+    """Return selected artifacts once, in deterministic manifest order."""
+
+    required_by_dataset: dict[str, set[str]] = {}
+    for dataset, case in _select(manifest, dataset_ids, case_ids):
+        required_by_dataset.setdefault(dataset.dataset_id, set()).update(_required_artifact_ids(case))
+    return tuple(
+        (dataset, artifact)
+        for dataset in manifest.datasets
+        for artifact in dataset.artifacts
+        if artifact.artifact_id in required_by_dataset.get(dataset.dataset_id, set())
+    )
+
+
 def fetch_suite(
     manifest: BenchmarkManifest,
     cache_dir: str | Path,
@@ -829,32 +927,23 @@ def fetch_suite(
 ) -> JsonObject:
     """Acquire all unique artifacts required by the selected cases."""
 
-    selected = _select(manifest, dataset_ids, case_ids)
-    required_by_dataset: dict[str, set[str]] = {}
-    for dataset, case in selected:
-        required_by_dataset.setdefault(dataset.dataset_id, set()).update(_required_artifact_ids(case))
     records: list[JsonObject] = []
-    for dataset in manifest.datasets:
-        if dataset.dataset_id not in required_by_dataset:
-            continue
-        for artifact in dataset.artifacts:
-            if artifact.artifact_id not in required_by_dataset[dataset.dataset_id]:
-                continue
-            acquire_artifact(artifact, cache_dir, offline=offline, downloader=downloader)
-            records.append(
-                {
-                    "dataset": dataset.dataset_id,
-                    "artifact": artifact.artifact_id,
-                    "sha256": artifact.sha256,
-                    "size_bytes": artifact.size_bytes,
-                    "license": {
-                        "spdx": artifact.license.spdx,
-                        "url": artifact.license.url,
-                        "notice": artifact.license.notice,
-                        "repository_license_url": artifact.license.repository_license_url,
-                    },
-                }
-            )
+    for dataset, artifact in selected_required_artifacts(manifest, dataset_ids, case_ids):
+        acquire_artifact(artifact, cache_dir, offline=offline, downloader=downloader)
+        records.append(
+            {
+                "dataset": dataset.dataset_id,
+                "artifact": artifact.artifact_id,
+                "sha256": artifact.sha256,
+                "size_bytes": artifact.size_bytes,
+                "license": {
+                    "spdx": artifact.license.spdx,
+                    "url": artifact.license.url,
+                    "notice": artifact.license.notice,
+                    "repository_license_url": artifact.license.repository_license_url,
+                },
+            }
+        )
     return {
         "kind": "benchmark-fetch",
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -928,6 +1017,8 @@ def _design_inventory_sha256(design: Design) -> str:
         add("drivers", [net, sorted(objects)])
     for net, objects in sorted(design.loads.items()):
         add("loads", [net, sorted(objects)])
+    for input_pin, output_pins in sorted(design.combinational_arcs.items()):
+        add("combinational_arcs", [input_pin, sorted(output_pins)])
     return digest.hexdigest()
 
 
@@ -1002,9 +1093,18 @@ def _semantic_snapshot(result: AuditResult, design: Design, path_aliases: Mappin
                 "targets": sorted(clock.targets),
                 "period": clock.period,
                 "waveform": list(clock.waveform) if clock.waveform is not None else None,
+                "waveform_explicit": clock.waveform_explicit,
+                "valid": clock.name in mode.valid_clocks,
                 "generated": clock.generated,
                 "source_targets": sorted(clock.source_targets),
                 "master_clock": clock.master_clock,
+                "divide_by": clock.divide_by,
+                "multiply_by": clock.multiply_by,
+                "duty_cycle": clock.duty_cycle,
+                "invert": clock.invert,
+                "combinational": clock.combinational,
+                "edges": list(clock.edges) if clock.edges is not None else None,
+                "edge_shift": list(clock.edge_shift) if clock.edge_shift is not None else None,
             }
             for clock in sorted(mode.clocks.values(), key=lambda item: item.name)
         ]
@@ -1014,10 +1114,12 @@ def _semantic_snapshot(result: AuditResult, design: Design, path_aliases: Mappin
                 "from": sorted(item.from_objects),
                 "to": sorted(item.to_objects),
                 "through": [sorted(group) for group in item.through_objects],
+                "qualifiers": item.qualifiers,
             }
             for item in mode.exceptions
         ]
         exceptions.sort(key=_canonical_json)
+        io_delays = effective_io_delay_semantics(mode.io_delays)
         components = {
             component.key: {
                 "covered": component.covered,
@@ -1030,6 +1132,7 @@ def _semantic_snapshot(result: AuditResult, design: Design, path_aliases: Mappin
         modes[mode.name] = {
             "clocks": clocks,
             "exceptions": exceptions,
+            "io_delays": io_delays,
             "coverage": {
                 "score": mode.coverage.score,
                 "grade": mode.coverage.grade,
@@ -1083,10 +1186,7 @@ def load_baseline(path: str | Path, manifest: BenchmarkManifest) -> Mapping[str,
     """Load a deterministic semantic baseline and bind it to the manifest."""
 
     baseline_path = Path(path)
-    try:
-        raw = json.loads(baseline_path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
-    except json.JSONDecodeError as error:
-        raise BenchmarkError(f"invalid benchmark baseline JSON: {error}") from error
+    raw = _load_json(baseline_path, "benchmark baseline")
     value = _object(raw, "baseline")
     _known_keys(value, {"schema_version", "suite_id", "manifest_sha256", "cases"}, "baseline")
     if value.get("schema_version") != BASELINE_SCHEMA_VERSION:

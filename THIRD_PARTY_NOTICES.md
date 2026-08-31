@@ -1,16 +1,19 @@
 # Third-party notices
 
 OpenConstraint's own source code is licensed under Apache-2.0. Runtime and
-development dependencies retain their respective licenses; the installed
-package metadata and dependency lock files are the authoritative inventory for
-a particular release.
+development dependencies retain their respective licenses. Release provenance
+attestations bind published artifacts to their source and build workflow; they
+are not a software bill of materials or a transitive dependency/license
+inventory. The build backend and direct distribution tools are exactly
+versioned in `pyproject.toml`; other development tooling is constrained by
+compatible ranges rather than represented as a full transitive lock.
 
 ## OpenSTA
 
 [OpenSTA](https://github.com/The-OpenROAD-Project/OpenSTA) is an optional,
 separately installed timing engine licensed under GPL-3.0-or-later and offered
 under separate commercial terms by its copyright holder. OpenConstraint
-v0.2.0-beta does not copy, vendor, link against, or redistribute OpenSTA source
+v0.3.0-beta does not copy, vendor, link against, or redistribute OpenSTA source
 or binaries. When a user explicitly supplies `--opensta`, it can invoke a
 separately installed `sta`/`opensta` executable as an isolated child process.
 Any future distribution that bundles OpenSTA must be reviewed for and comply

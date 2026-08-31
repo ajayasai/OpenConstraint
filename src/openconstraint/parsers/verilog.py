@@ -26,6 +26,8 @@ VERILOG_TRUNCATION_WARNING = "Verilog retention limit reached; additional warnin
 _MODULE_RE = re.compile(r"\bmodule\b")
 _ENDMODULE_RE = re.compile(r"\bendmodule\b")
 _MODULE_NAME_RE = re.compile(rf"\s*({IDENT})")
+_BUS_RANGE_RE = re.compile(r"\[\s*(-?\d+)\s*:\s*(-?\d+)\s*\]")
+_EXPANDED_BUS_BIT_RE = re.compile(r"(.+)\[(-?\d+)\]")
 
 
 @dataclass(slots=True)
@@ -124,7 +126,7 @@ def _expand_names(
     budget: _ExpansionBudget | None = None,
 ) -> list[str]:
     fragment = re.sub(r"\b(?:wire|reg|logic|tri|signed|unsigned|supply0|supply1)\b", " ", fragment)
-    range_match = re.search(r"\[\s*(-?\d+)\s*:\s*(-?\d+)\s*\]", fragment)
+    range_match = _BUS_RANGE_RE.search(fragment)
     bit_range: range | None = None
     if range_match:
         raw_left, raw_right = range_match.group(1), range_match.group(2)
@@ -189,6 +191,117 @@ def _expand_names(
     if bit_range is None:
         return base_names
     return [f"{base}[{bit}]" for base in base_names for bit in bit_range]
+
+
+def _declared_base_names(fragment: str) -> list[str]:
+    """Return declaration identifiers without expanding a packed range.
+
+    This intentionally has the same finite item bound as ``_expand_names``.  It
+    is used only to retire non-ANSI scalar header placeholders when a bus could
+    not be expanded because one of the parser's retention limits was reached.
+    """
+
+    fragment = re.sub(r"\b(?:wire|reg|logic|tri|signed|unsigned|supply0|supply1)\b", " ", fragment)
+    fragment = _BUS_RANGE_RE.sub(" ", fragment, count=1)
+    pieces = _split_top_level(fragment, max_items=MAX_EXPANDED_NAMES_PER_DECLARATION + 1)
+    if len(pieces) > MAX_EXPANDED_NAMES_PER_DECLARATION:
+        return []
+    names: list[str] = []
+    for piece in pieces:
+        value = piece.split("=", 1)[0].strip()
+        match = re.search(rf"({IDENT})\s*$", value)
+        if not match:
+            continue
+        name = match.group(1).rstrip()
+        names.append(name[1:].rstrip() if name.startswith("\\") else name)
+    return names
+
+
+def _expanded_bus_base(name: str) -> str | None:
+    match = _EXPANDED_BUS_BIT_RE.fullmatch(name)
+    return match.group(1) if match else None
+
+
+def _ordered_port_groups(ports: list[ModulePort]) -> list[list[ModulePort]]:
+    """Group expanded bus bits into their single positional interface slot."""
+
+    groups: list[list[ModulePort]] = []
+    previous_base: str | None = None
+    for port in ports:
+        base = _expanded_bus_base(port.name)
+        if base is not None and base == previous_base:
+            groups[-1].append(port)
+        else:
+            groups.append([port])
+        previous_base = base
+    return groups
+
+
+def _merge_body_port_declaration(
+    ports: list[ModulePort],
+    port_map: dict[str, ModulePort],
+    nets: set[str],
+    kind: str,
+    fragment: str,
+    warnings: list[str],
+    budget: _ExpansionBudget,
+) -> None:
+    """Merge a body declaration into ANSI or non-ANSI header ports.
+
+    Non-ANSI headers name a packed port once (``module m(data);``), while the
+    body supplies its range.  Replace that unknown-direction placeholder with
+    the expanded bits in place instead of retaining a ghost scalar alongside
+    the real bus.
+    """
+
+    expanded_names = _expand_names(fragment, warnings, budget)
+    replacements: dict[str, list[str]] = {}
+    for name in expanded_names:
+        base = _expanded_bus_base(name)
+        if base is not None:
+            replacements.setdefault(base, []).append(name)
+
+    replacement_bases = {
+        base
+        for base in replacements
+        if (placeholder := port_map.get(base)) is not None and placeholder.direction == "unknown"
+    }
+    # If a valid packed declaration exceeded a retention limit, omit its
+    # placeholder too.  Keeping a scalar with unknown direction would invent a
+    # port that is not present in the source and produce misleading rule hits.
+    if not expanded_names and _BUS_RANGE_RE.search(fragment):
+        replacement_bases.update(
+            base
+            for base in _declared_base_names(fragment)
+            if (placeholder := port_map.get(base)) is not None and placeholder.direction == "unknown"
+        )
+
+    if replacement_bases:
+        merged_ports: list[ModulePort] = []
+        for port in ports:
+            if port.name not in replacement_bases or port.direction != "unknown":
+                merged_ports.append(port)
+                continue
+            port_map.pop(port.name, None)
+            nets.discard(port.name)
+            for name in replacements.get(port.name, []):
+                replacement = port_map.get(name)
+                if replacement is None:
+                    replacement = ModulePort(name, kind)
+                    port_map[name] = replacement
+                    merged_ports.append(replacement)
+                else:
+                    replacement.direction = kind
+        ports[:] = merged_ports
+
+    for net_name in expanded_names:
+        nets.add(net_name)
+        if net_name in port_map:
+            port_map[net_name].direction = kind
+        else:
+            port = ModulePort(net_name, kind)
+            ports.append(port)
+            port_map[net_name] = port
 
 
 def _parse_ports(header: str, warnings: list[str], budget: _ExpansionBudget) -> list[ModulePort]:
@@ -347,15 +460,18 @@ def parse_verilog_text(text: str) -> VerilogDesign:
             declaration = re.match(r"\s*(input|output|inout|wire|tri|logic|reg)\b(.*)$", statement, re.DOTALL)
             if declaration:
                 kind, fragment = declaration.group(1), declaration.group(2)
-                for net_name in _expand_names(fragment, warnings, expansion_budget):
-                    nets.add(net_name)
-                    if kind in {"input", "output", "inout"}:
-                        if net_name in port_map:
-                            port_map[net_name].direction = kind
-                        else:
-                            port = ModulePort(net_name, kind)
-                            ports.append(port)
-                            port_map[net_name] = port
+                if kind in {"input", "output", "inout"}:
+                    _merge_body_port_declaration(
+                        ports,
+                        port_map,
+                        nets,
+                        kind,
+                        fragment,
+                        warnings,
+                        expansion_budget,
+                    )
+                else:
+                    nets.update(_expand_names(fragment, warnings, expansion_budget))
                 continue
             assign = re.match(r"\s*assign\s+(.+?)\s*=\s*(.+)\s*$", statement, re.DOTALL)
             if assign:
@@ -367,6 +483,7 @@ def parse_verilog_text(text: str) -> VerilogDesign:
                     warnings.append(f"ignored non-scalar assign in module {name}: {statement.strip()[:80]}")
                 continue
             if re.match(r"\s*(?:always|initial|parameter|localparam|genvar)\b", statement):
+                warnings.append(f"ignored unsupported statement in module {name}: {statement.strip()[:80]}")
                 continue
             instance = _parse_instance(statement, warnings)
             if instance:
@@ -429,13 +546,15 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
         raise ValueError(f"top module {selected_top!r} was not found")
 
     expanded_port_bits: dict[str, dict[str, list[tuple[str, str]]]] = {}
+    ordered_port_groups: dict[str, list[list[ModulePort]]] = {}
     for module_name, module in verilog.modules.items():
         by_base: dict[str, list[tuple[str, str]]] = {}
         for module_port in module.ports:
-            bit_match = re.fullmatch(r"(.+)\[(-?\d+)\]", module_port.name)
+            bit_match = _EXPANDED_BUS_BIT_RE.fullmatch(module_port.name)
             if bit_match:
                 by_base.setdefault(bit_match.group(1), []).append((module_port.name, bit_match.group(2)))
         expanded_port_bits[module_name] = by_base
+        ordered_port_groups[module_name] = _ordered_port_groups(module.ports)
 
     top_module = verilog.modules[selected_top]
     ports = {port.name: Port(port.name, port.direction, port.name) for port in top_module.ports}
@@ -445,6 +564,9 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
     warnings = list(verilog.warnings) + list(library.warnings)
     drivers: dict[str, set[str]] = {}
     loads: dict[str, set[str]] = {}
+    combinational_arcs: dict[str, set[str]] = {}
+    inferred_cell_types: set[str] = set()
+    incomplete_arc_cell_types: set[str] = set()
     elaboration_remaining = MAX_ELABORATION_OBJECTS
     elaboration_limit_reported = False
 
@@ -540,15 +662,40 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
                                 if bit_net is not None:
                                     child_bindings[child_port_name] = bit_net
                 else:
-                    for port, expression in zip(child_module.ports, child.positional_connections, strict=False):
+                    for port_group, expression in zip(
+                        ordered_port_groups[child_module.name], child.positional_connections, strict=False
+                    ):
+                        base = _expanded_bus_base(port_group[0].name)
+                        signal = _simple_signal(expression)
+                        if base is not None and signal is not None and _expanded_bus_base(signal) is None:
+                            for port in port_group:
+                                bit_match = _EXPANDED_BUS_BIT_RE.fullmatch(port.name)
+                                assert bit_match is not None
+                                bit_net = resolve(f"{signal}[{bit_match.group(2)}]", local_map, prefix)
+                                if bit_net is not None:
+                                    child_bindings[port.name] = bit_net
+                            continue
                         resolved_net = resolve(expression, local_map, prefix)
                         if resolved_net is not None:
-                            child_bindings[port.name] = resolved_net
+                            for port in port_group:
+                                child_bindings[port.name] = resolved_net
                 visit(child_module, child_path, child_bindings, stack + (module.name,))
                 continue
 
+            if child_path in instances:
+                retained = instances[child_path]
+                warnings.append(
+                    f"flattened instance path collision at {child_path!r}; retained the first "
+                    f"{retained.cell_type!r} instance and ignored {child.cell_type!r}. "
+                    "Escaped identifiers containing '/' are ambiguous with hierarchy separators"
+                )
+                continue
+
             connection_names = set(child.named_connections)
-            spec = library.cells.get(child.cell_type) or _inferred_spec(child.cell_type, connection_names)
+            spec = library.cells.get(child.cell_type)
+            if spec is None:
+                inferred_cell_types.add(child.cell_type)
+                spec = _inferred_spec(child.cell_type, connection_names)
             child_pins: dict[str, Pin] = {}
             if child.named_connections:
                 connection_items = list(child.named_connections.items())
@@ -576,10 +723,44 @@ def elaborate(verilog: VerilogDesign, library: CellLibrary, top: str | None = No
                     target = drivers if direction == "output" else loads
                     target.setdefault(resolved_net, set()).add(pin_path)
             instances[child_path] = Instance(child_path, child.cell_type, child_pins, spec.sequential)
+            if not spec.sequential:
+                connected_inputs = {
+                    name
+                    for name, pin in child_pins.items()
+                    if pin.direction in {"input", "inout"} and pin.net is not None
+                }
+                connected_outputs = {
+                    name
+                    for name, pin in child_pins.items()
+                    if pin.direction in {"output", "inout"} and pin.net is not None
+                }
+                for output_name in connected_outputs:
+                    dependencies = spec.combinational_dependencies.get(output_name)
+                    if dependencies is None:
+                        if connected_inputs:
+                            incomplete_arc_cell_types.add(child.cell_type)
+                        continue
+                    output_path = child_pins[output_name].path
+                    for input_name in dependencies & connected_inputs:
+                        input_path = child_pins[input_name].path
+                        combinational_arcs.setdefault(input_path, set()).add(output_path)
 
     top_bindings = {port.name: port.name for port in top_module.ports}
     visit(top_module, "", top_bindings, ())
+    if inferred_cell_types:
+        sample = sorted(inferred_cell_types)[:20]
+        warnings.append(
+            f"Liberty metadata is missing for {len(inferred_cell_types)} instantiated cell type(s); "
+            f"inferred sequential and pin roles from names (sample: {', '.join(sample)})"
+        )
+    if incomplete_arc_cell_types:
+        sample = sorted(incomplete_arc_cell_types)[:20]
+        warnings.append(
+            f"Liberty function/timing dependencies are missing for {len(incomplete_arc_cell_types)} "
+            f"instantiated combinational cell type(s); clock propagation stops at unknown arcs "
+            f"(sample: {', '.join(sample)})"
+        )
     for port in ports.values():
         target = drivers if port.direction in {"input", "inout"} else loads
         target.setdefault(port.net, set()).add(port.name)
-    return Design(selected_top, ports, nets, instances, pins, drivers, loads, warnings)
+    return Design(selected_top, ports, nets, instances, pins, drivers, loads, combinational_arcs, warnings)

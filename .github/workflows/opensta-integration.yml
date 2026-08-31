@@ -1,0 +1,252 @@
+name: Pinned OpenSTA integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/opensta-integration.yml"
+      - "examples/tiny/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+      - "tests/fixtures/opensta/**"
+      - "tests/test_opensta.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/opensta-integration.yml"
+      - "examples/tiny/**"
+      - "pyproject.toml"
+      - "src/openconstraint/**"
+      - "tests/fixtures/opensta/**"
+      - "tests/test_opensta.py"
+  schedule:
+    - cron: "17 5 * * 5"
+  workflow_dispatch:
+
+concurrency:
+  group: opensta-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: OpenSTA c821ad1 effective-SDC round trip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OPENSTA_COMMIT: c821ad1ad07031de831fd567fc626bf70d522c49
+      CUDD_URL: https://raw.githubusercontent.com/davidkebo/cudd/c8d587ef3fbcc115977fed48a867aa6664ca11d0/cudd_versions/cudd-3.0.0.tar.gz
+      CUDD_SHA256: b8e966b4562c96a03e7fbea239729587d7b395d53cadcc39a7203b49cf7eeb69
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install pinned-build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            automake \
+            autotools-dev \
+            bison \
+            cmake \
+            flex \
+            g++ \
+            gcc \
+            git \
+            libeigen3-dev \
+            libfl-dev \
+            libfmt-dev \
+            swig \
+            tcl-dev \
+            tcl-tclreadline \
+            wget
+
+      - name: Build checksum-pinned CUDD 3.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget --https-only --secure-protocol=TLSv1_2 --output-document=cudd-3.0.0.tar.gz "$CUDD_URL"
+          printf '%s  %s\n' "$CUDD_SHA256" cudd-3.0.0.tar.gz | sha256sum --check --strict
+          test "$(stat --format=%s cudd-3.0.0.tar.gz)" = "1175302"
+          tar --extract --gzip --file=cudd-3.0.0.tar.gz
+          cd cudd-3.0.0
+          ./configure
+          make --jobs="$(nproc)"
+
+      - name: Build exact OpenSTA revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init opensta
+          git -C opensta remote add origin https://github.com/The-OpenROAD-Project/OpenSTA.git
+          git -C opensta fetch --depth=1 origin "$OPENSTA_COMMIT"
+          git -C opensta checkout --detach FETCH_HEAD
+          test "$(git -C opensta rev-parse HEAD)" = "$OPENSTA_COMMIT"
+          cmake \
+            -S opensta \
+            -B opensta/build \
+            -DCMAKE_BUILD_TYPE=RELEASE \
+            -DBUILD_TESTS=OFF \
+            -DCUDD_DIR="$PWD/cudd-3.0.0"
+          cmake --build opensta/build --parallel "$(nproc)"
+          opensta/build/sta -version
+
+      - name: Install OpenConstraint and schema validator
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "." "jsonschema>=4.23"
+
+      - name: Verify source-pinned object-query semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          opensta/build/sta -no_init -no_splash -exit \
+            tests/fixtures/opensta/selector-semantics.tcl \
+            2>&1 | tee opensta-selector-semantics.log
+          grep --fixed-strings --line-regexp \
+            OPENCONSTRAINT_SELECTOR_SEMANTICS_OK \
+            opensta-selector-semantics.log
+
+      - name: Audit trusted fixture through real OpenSTA
+        shell: bash
+        run: |
+          set -euo pipefail
+          openconstraint audit \
+            --verilog tests/fixtures/opensta/roundtrip.v \
+            --liberty tests/fixtures/opensta/roundtrip.lib \
+            --sdc tests/fixtures/opensta/roundtrip.sdc \
+            --top opensta_roundtrip \
+            --opensta \
+            --opensta-bin "$PWD/opensta/build/sta" \
+            --no-implicit-waveform-note \
+            --fail-on never \
+            --format json \
+            --output opensta-integration-report.json
+
+      - name: Verify effective-SDC re-audit evidence
+        shell: python
+        run: |
+          import json
+          import re
+          from importlib import resources
+          from pathlib import Path
+
+          from jsonschema import Draft202012Validator
+
+          report = json.loads(Path("opensta-integration-report.json").read_text(encoding="utf-8"))
+          schema = json.loads(
+              resources.files("openconstraint.schemas")
+              .joinpath("openconstraint-report.schema.json")
+              .read_text(encoding="utf-8")
+          )
+          Draft202012Validator(schema).validate(report)
+          sha256_pattern = re.compile(r"[0-9a-f]{64}")
+
+          expected_components = {
+              "sequential_endpoints": {"covered": 1, "total": 1, "percentage": 100.0, "weight": 0.5},
+              "input_delays": {"covered": 4, "total": 4, "percentage": 100.0, "weight": 0.2},
+              "output_delays": {"covered": 4, "total": 4, "percentage": 100.0, "weight": 0.2},
+              "query_health": {"covered": 5, "total": 5, "percentage": 100.0, "weight": 0.1},
+          }
+
+          def verify_complete_coverage(coverage):
+              assert coverage["score"] == 100.0, coverage
+              assert coverage["grade"] == "A", coverage
+              components = {component["key"]: component for component in coverage["components"]}
+              assert set(components) == set(expected_components), components
+              for key, expected in expected_components.items():
+                  actual = components[key]
+                  assert {field: actual[field] for field in expected} == expected, actual
+                  assert actual["covered"] == actual["total"] > 0, actual
+
+          assert report["summary"]["coverage"] == {"default": 100.0}, report["summary"]
+          assert report["summary"]["diagnostic_count"] == 0, report["summary"]
+          assert report["summary"]["errors"] == 0, report["summary"]
+          assert report["summary"]["warnings"] == 0, report["summary"]
+          assert report["summary"]["notes"] == 0, report["summary"]
+          assert report["design"] == {
+              "top": "opensta_roundtrip",
+              "ports": 3,
+              "nets": 3,
+              "instances": 1,
+              "sequential_instances": 1,
+              "sequential_endpoints": 1,
+              "parser_warnings": [],
+          }, report["design"]
+          assert len(report["modes"]) == 1, report["modes"]
+          static_mode = report["modes"][0]
+          assert static_mode["name"] == "default", static_mode
+          assert static_mode["diagnostics"] == [], static_mode
+          assert len(static_mode["io_delays"]) == 2, static_mode["io_delays"]
+          assert len(static_mode["clocks"]) == 2, static_mode["clocks"]
+          clocks = {clock["name"]: clock for clock in static_mode["clocks"]}
+          assert {
+              name: {
+                  "targets": clock["targets"],
+                  "period": clock["period"],
+                  "waveform": clock["waveform"],
+                  "waveform_explicit": clock["waveform_explicit"],
+                  "generated": clock["generated"],
+              }
+              for name, clock in clocks.items()
+          } == {
+              "core_clk": {
+                  "targets": ["clk"],
+                  "period": 10.0,
+                  "waveform": None,
+                  "waveform_explicit": False,
+                  "generated": False,
+              },
+              "phase_clk": {
+                  "targets": [],
+                  "period": 8.0,
+                  "waveform": [1.0, 3.0],
+                  "waveform_explicit": True,
+                  "generated": False,
+              },
+          }, clocks
+          verify_complete_coverage(static_mode["coverage"])
+
+          evidence = report["summary"]["opensta"]
+          assert evidence["succeeded"] is True, evidence
+          assert evidence["version"], evidence
+          assert len(evidence["modes"]) == 1, evidence
+          mode = evidence["modes"][0]
+          assert mode["mode"] == "default", mode
+          assert mode["succeeded"] is True, mode
+          assert mode["return_code"] == 0, mode
+          assert mode["timed_out"] is False, mode
+          assert mode["duration_seconds"] >= 0, mode
+          assert "unconstrained endpoint" not in (mode["stdout"] + mode["stderr"]).lower(), mode
+          assert sha256_pattern.fullmatch(mode["effective_sdc_sha256"]), mode
+          assert mode["effective_audit"] is not None, mode
+          effective = mode["effective_audit"]
+          assert effective["diagnostic_count"] == 0, effective
+          assert effective["added_diagnostic_count"] == 0, effective
+          assert effective["semantic_match"] is True, effective
+          assert sha256_pattern.fullmatch(effective["static_semantic_sha256"]), effective
+          assert sha256_pattern.fullmatch(effective["effective_semantic_sha256"]), effective
+          assert effective["static_semantic_sha256"] == effective["effective_semantic_sha256"], effective
+          verify_complete_coverage(effective["coverage"])
+
+      - name: Preserve integration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opensta-c821ad1-integration
+          path: |
+            opensta-integration-report.json
+            opensta-selector-semantics.log
+          if-no-files-found: warn
+          retention-days: 30

@@ -50,20 +50,34 @@
             "evidence": {
               "clock": "core_clk",
               "definitions": {
-                "functional": [
-                  10.0,
-                  [
+                "functional": {
+                  "combinational": false,
+                  "divide_by": null,
+                  "duty_cycle": null,
+                  "edge_shift": null,
+                  "edges": null,
+                  "generated": false,
+                  "invert": false,
+                  "master_clock": null,
+                  "multiply_by": null,
+                  "period": 10.0,
+                  "source_targets": [],
+                  "targets": [
                     "clk"
                   ],
-                  false
-                ]
+                  "waveform": [
+                    0.0,
+                    5.0
+                  ],
+                  "waveform_explicit": true
+                }
               },
               "missing_modes": [
                 "scan"
               ]
             },
             "mode": "cross-mode",
-            "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons."
+            "rationale": "Mode-specific clocks are common, but unintended target, waveform, source, or transform drift can invalidate comparisons."
           },
           "ruleId": "OC5001"
         },
@@ -92,20 +106,34 @@
             "evidence": {
               "clock": "scan_clk",
               "definitions": {
-                "scan": [
-                  50.0,
-                  [
+                "scan": {
+                  "combinational": false,
+                  "divide_by": null,
+                  "duty_cycle": null,
+                  "edge_shift": null,
+                  "edges": null,
+                  "generated": false,
+                  "invert": false,
+                  "master_clock": null,
+                  "multiply_by": null,
+                  "period": 50.0,
+                  "source_targets": [],
+                  "targets": [
                     "scan_clk"
                   ],
-                  false
-                ]
+                  "waveform": [
+                    0.0,
+                    25.0
+                  ],
+                  "waveform_explicit": true
+                }
               },
               "missing_modes": [
                 "functional"
               ]
             },
             "mode": "cross-mode",
-            "rationale": "Mode-specific clocks are common, but unintended period/target drift can invalidate comparisons."
+            "rationale": "Mode-specific clocks are common, but unintended target, waveform, source, or transform drift can invalidate comparisons."
           },
           "ruleId": "OC5001"
         }
@@ -123,15 +151,14 @@
               "id": "OC5001",
               "name": "mode-clock-drift",
               "properties": {
-                "category": "modes",
-                "precision": "high"
+                "category": "modes"
               },
               "shortDescription": {
                 "text": "A clock definition differs across modes."
               }
             }
           ],
-          "version": "0.2.0b0"
+          "version": "0.3.0b0"
         }
       }
     }

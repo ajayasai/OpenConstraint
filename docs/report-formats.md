@@ -14,15 +14,36 @@ human interface and may evolve before 1.0; scripts should consume JSON.
 The JSON report is the canonical machine-readable representation. Top-level
 fields include:
 
-- `schema_version` (currently `1.0.0`);
+- `schema_version` (currently `1.1.0`);
 - tool name/version and design inventory;
 - summary counts and per-mode coverage;
+- optional adoption-control provenance and controlled-finding dispositions;
 - per-mode clocks, exceptions, graph nodes/edges, and diagnostics;
 - a flattened diagnostic list for simple consumers.
 
 Every diagnostic includes rule ID, severity, message, location, rationale,
 suggestion, mode, fingerprint, and rule-specific evidence. Export the bundled
 JSON Schema with `openconstraint schema`.
+
+Clock records include a `valid` boolean, explicit-waveform state, and normalized
+generated-clock source/master, divide/multiply/duty, invert/combinational,
+edge, and edge-shift fields. Invalid definition attempts remain reviewable in
+the report with `valid: false`, but do not participate in active query, graph,
+coverage, comparison, or semantic-digest state. Exception records retain ordered through collections and a strict
+qualifier object for transitions, setup/hold or start/end applicability,
+multiplier/delay values, explicit-side/scope-resolution state, multicycle reset
+markers, and clock-group relation where relevant.
+
+Graph records include explicit generated-clock source-object edges. Exception
+through edges carry their zero-based collection index and rise/fall transition,
+so consumers can reconstruct ordered through scopes instead of flattening them.
+
+When a diagnostic baseline or waiver file is loaded, active diagnostic arrays
+contain only findings that still affect the severity gate.
+`summary.adoption.dispositions` retains every baselined or waived diagnostic,
+and records waiver rationale/expiry plus the schema version and SHA-256 of each
+control source. This separation is part of the report contract; a controlled
+finding is not erased evidence.
 
 The schema validates the complete report structure, including nested coverage,
 clock, exception, graph, and diagnostic records. Structural records reject
@@ -33,8 +54,13 @@ without weakening validation of the surrounding report.
 
 When `--opensta` is enabled, `summary.opensta` records the executable version,
 overall status, and per-mode return code, timeout status, duration,
-effective-SDC SHA-256, stdout, and stderr. This additional output may contain
-sensitive design or environment details.
+effective-SDC SHA-256, stdout, and stderr. A successful mode also contains
+`effective_audit`: effective coverage and diagnostic counts, the number of new
+diagnostics merged into the active result, normalized static/effective semantic
+SHA-256 values, and their equality flag. The digests cover modeled clocks,
+ordered exception records, canonical active I/O-delay state, and coverage; they
+are not a Tcl- or signoff-equivalence proof. This additional output may contain sensitive design or
+environment details.
 
 Schema compatibility is independent from the pre-1.0 CLI version. An
 incompatible report shape requires a schema-version change and changelog entry.
@@ -50,11 +76,17 @@ use file URIs.
 Moving an input file changes its location-derived fingerprint. Keep workspace
 paths stable when using SARIF result baselines.
 
+With adoption controls, SARIF also includes controlled results. Waivers use an
+accepted external `suppressions` record with the review justification;
+diagnostic-baseline matches use `baselineState: unchanged`, and active findings
+use `baselineState: new` when a baseline was loaded.
+
 ## HTML
 
 The HTML report is one offline file with embedded styles, scripts, and data. It
-contains coverage cards, design inventory, finding filters, remediation, and a
-mode-selectable clock/exception graph. It loads no CDN and sends no telemetry.
+contains coverage cards, design inventory, finding filters, adoption-control
+provenance and dispositions, remediation, and a mode-selectable clock/exception
+graph. It loads no CDN and sends no telemetry.
 
 HTML and machine reports can expose hierarchical names, source paths, raw SDC
 exception text, and matched-object samples. Review them before sharing outside
