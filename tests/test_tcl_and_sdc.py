@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from openconstraint.engine import AuditOptions
 from openconstraint.parsers import tcl as tcl_parser
 from openconstraint.parsers.sdc import parse_sdc_text
@@ -12,6 +14,8 @@ from openconstraint.parsers.tcl import (
     unquote,
 )
 from openconstraint.query import resolve_selector
+
+PINNED_GET_COMMANDS = ("get_ports", "get_pins", "get_cells", "get_nets", "get_clocks")
 
 
 def test_tcl_splits_newlines_and_semicolons_without_splitting_nested_groups() -> None:
@@ -119,6 +123,8 @@ def test_tcl_word_helpers_preserve_grouping_and_reject_partial_brackets() -> Non
     )
     assert unquote("{a b}") == "a b"
     assert bracket_body("[get_ports clk]") == "get_ports clk"
+    assert bracket_body('"[get_ports clk]"') == "get_ports clk"
+    assert bracket_body("{[get_ports clk]}") is None
     assert bracket_body("prefix[get_ports clk]") is None
     assert bracket_body("[get_ports clk]suffix") is None
 
@@ -244,7 +250,16 @@ def test_min_max_delay_boolean_flags_do_not_consume_scope_options() -> None:
     assert command.positionals == ["2"]
 
 
-def test_omitted_get_patterns_use_the_sdc_implicit_wildcard(design_factory) -> None:
+@pytest.mark.parametrize("command_name", PINNED_GET_COMMANDS)
+def test_omitted_get_patterns_use_the_sdc_implicit_wildcard(command_name: str) -> None:
+    selector = parse_sdc_text(f"set_false_path -to [{command_name}]\n").commands[0].selectors[0]
+
+    assert selector.command_name == command_name
+    assert selector.patterns == ("*",)
+    assert selector.parse_error is None
+
+
+def test_omitted_get_patterns_resolve_as_all_objects(design_factory) -> None:
     design = design_factory()
     document = parse_sdc_text("set_false_path -from [get_cells] -to [get_ports]\n")
     from_selector, to_selector = document.commands[0].selectors
@@ -253,6 +268,332 @@ def test_omitted_get_patterns_use_the_sdc_implicit_wildcard(design_factory) -> N
     assert to_selector.patterns == ("*",)
     assert resolve_selector(from_selector, design, {}).matches == {"u_ff", "u_out"}
     assert resolve_selector(to_selector, design, {}).matches == {"clk", "clk2", "data", "spare", "result"}
+
+
+@pytest.mark.parametrize("command_name", PINNED_GET_COMMANDS)
+def test_explicit_empty_get_pattern_remains_an_empty_collection(design_factory, command_name: str) -> None:
+    design = design_factory()
+    selector = parse_sdc_text(f"set_false_path -to [{command_name} {{}}]\n").commands[0].selectors[0]
+    resolved = resolve_selector(selector, design, {})
+
+    assert selector.patterns == ()
+    assert selector.parse_error is None
+    assert resolved.error is None
+    assert resolved.matches == set()
+
+
+def test_explicit_empty_get_pattern_is_a_zero_query_not_a_broad_query(audit_factory) -> None:
+    result = audit_factory("set_input_delay 1 [get_ports {}]")
+    ids = [finding.rule_id for finding in result.diagnostics]
+    assert "OC1001" in ids
+    assert "OC1002" not in ids
+
+
+@pytest.mark.parametrize(
+    ("command_name", "option"),
+    [
+        ("get_cells", "-filter"),
+        ("get_cells", "-hsc"),
+        ("get_cells", "-of_objects"),
+        ("get_clocks", "-filter"),
+        ("get_nets", "-filter"),
+        ("get_nets", "-hsc"),
+        ("get_nets", "-of_objects"),
+        ("get_pins", "-filter"),
+        ("get_pins", "-hsc"),
+        ("get_pins", "-of_objects"),
+        ("get_ports", "-filter"),
+        ("get_ports", "-of_objects"),
+    ],
+)
+def test_get_query_missing_option_operand_is_a_static_parse_error(
+    audit_factory, command_name: str, option: str
+) -> None:
+    query = f"[{command_name} {option}]"
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ()
+    assert selector.parse_error == f"{command_name} {option} missing value"
+
+    result = audit_factory(f"set_false_path -to {query}")
+    findings = [finding for finding in result.diagnostics if finding.rule_id == "OC1004"]
+    assert len(findings) == 1
+    assert findings[0].evidence["query"] == query
+    assert findings[0].evidence["reason"] == selector.parse_error
+    assert not any(finding.rule_id in {"OC1001", "OC1002"} for finding in result.diagnostics)
+
+
+@pytest.mark.parametrize("expression", ["{}", '""', "{   }"])
+def test_empty_filter_expression_fails_closed(audit_factory, expression: str) -> None:
+    query = f"[get_ports -filter {expression} *]"
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    result = audit_factory(f"set_false_path -to {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert selector.filter_expression is not None
+    assert finding.evidence["reason"] == "empty filter expression"
+    assert not any(item.rule_id in {"OC1001", "OC1002"} for item in result.diagnostics)
+
+
+@pytest.mark.parametrize("command_name", ["get_cells", "get_nets", "get_pins"])
+def test_hsc_operand_is_consumed_and_reported_as_unsupported(audit_factory, command_name: str) -> None:
+    query = f"[{command_name} -hsc . target]"
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("target",)
+    assert selector.parse_error == f"{command_name} -hsc is not modeled by the static backend"
+
+    result = audit_factory(f"set_false_path -to {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["query"] == query
+    assert finding.evidence["reason"] == selector.parse_error
+    assert not any(item.rule_id in {"OC1001", "OC1002"} for item in result.diagnostics)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_reason"),
+    [
+        ("[get_ports -hierarchical data]", "get_ports does not support option -hierarchical"),
+        ("[get_clocks -hierarchical core]", "get_clocks does not support option -hierarchical"),
+        ("[get_ports -hsc . data]", "get_ports does not support option -hsc"),
+        ("[get_clocks -of_objects [get_ports clk]]", "get_clocks does not support option -of_objects"),
+        ("[get_cells -unknown target]", "get_cells does not support option -unknown"),
+    ],
+)
+def test_command_specific_get_options_fail_closed(audit_factory, query: str, expected_reason: str) -> None:
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.parse_error == expected_reason
+
+    result = audit_factory(f"set_false_path -to {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["query"] == query
+    assert finding.evidence["reason"] == expected_reason
+    assert not any(item.rule_id in {"OC1001", "OC1002"} for item in result.diagnostics)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "[get_cells -hierarchical -quiet *]",
+        "[get_clocks -regexp -nocase -quiet {^core$}]",
+        "[get_nets -hierarchical -quiet *]",
+        "[get_pins -hierarchical -quiet *]",
+        "[get_ports -regexp -nocase -quiet {^data$}]",
+        "[get_registers -filter {is_sequential == true} *]",
+    ],
+)
+def test_command_specific_get_options_preserve_modeled_forms(query: str) -> None:
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.parse_error is None
+
+
+def test_braced_option_token_is_parsed_after_tcl_quote_removal(design_factory) -> None:
+    design = design_factory()
+    selector = parse_sdc_text("set_false_path -to [get_nets {-quiet}]\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("*",)
+    assert selector.parse_error is None
+    assert resolve_selector(selector, design, {}).matches == set(design.nets)
+
+
+@pytest.mark.parametrize("word", ["{ -quiet }", '" -quiet "'])
+def test_option_like_word_with_preserved_tcl_whitespace_remains_a_pattern(design_factory, word: str) -> None:
+    design = design_factory()
+    selector = parse_sdc_text(f"set_false_path -to [get_ports {word}]\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("-quiet",)
+    assert selector.parse_error is None
+    assert resolve_selector(selector, design, {}).matches == set()
+
+
+@pytest.mark.parametrize(
+    ("word", "expected_patterns"),
+    [("{-q }", ("data",)), ("{ -q}", ("-q", "data")), ('" -q "', ("-q", "data"))],
+)
+def test_option_like_word_with_tcl_whitespace_does_not_collapse_into_a_flag(
+    word: str, expected_patterns: tuple[str, ...]
+) -> None:
+    selector = parse_sdc_text(f"set_false_path -to [get_ports {word} data]\n").commands[0].selectors[0]
+
+    assert selector.parse_error is not None
+    assert selector.patterns == expected_patterns
+
+
+def test_braces_suppress_nested_of_objects_substitution(audit_factory) -> None:
+    query = "[get_cells -of_objects {[get_nets q]}]"
+    selector = parse_sdc_text(f"set_false_path -from {query} -to [get_ports result]\n").commands[0].selectors[0]
+
+    assert selector.of_objects is None
+    assert selector.nested_selectors == ()
+    assert selector.dynamic is True
+
+    result = audit_factory(f"set_false_path -from {query} -to [get_ports result]")
+    assert any(item.rule_id == "OC1003" and item.evidence["query"] == query for item in result.diagnostics)
+    assert result.modes[0].exceptions[0].from_objects == set()
+
+
+def test_unsupported_of_objects_still_audits_evaluated_nested_query(audit_factory) -> None:
+    query = "[get_clocks -of_objects [get_ports missing]]"
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert selector.parse_error == "get_clocks does not support option -of_objects"
+    assert selector.of_objects is not None
+    assert [nested.raw for nested in selector.nested_selectors] == ["[get_ports missing]"]
+
+    result = audit_factory(f"set_false_path -from {query}")
+    assert any(item.rule_id == "OC1004" and item.evidence["query"] == query for item in result.diagnostics)
+    assert any(
+        item.rule_id == "OC1001" and item.evidence["query"] == "[get_ports missing]" for item in result.diagnostics
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "[get_ports [get_ports missing]]",
+        "[get_ports -hierarchical [get_ports missing]]",
+        "[get_clocks -bogus [get_ports missing]]",
+        "[all_inputs [get_ports missing]]",
+    ],
+)
+def test_evaluated_nested_positional_query_is_audited_independently(audit_factory, query: str) -> None:
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert [nested.raw for nested in selector.nested_selectors] == ["[get_ports missing]"]
+    result = audit_factory(f"set_false_path -from {query}")
+    assert any(item.rule_id == "OC1003" and item.evidence["query"] == query for item in result.diagnostics)
+    assert any(
+        item.rule_id == "OC1001" and item.evidence["query"] == "[get_ports missing]" for item in result.diagnostics
+    )
+
+
+def test_unmodeled_value_option_still_audits_evaluated_nested_query(audit_factory) -> None:
+    query = "[all_registers -clock [get_clocks missing]]"
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert [nested.raw for nested in selector.nested_selectors] == ["[get_clocks missing]"]
+    result = audit_factory(f"set_false_path -from {query}")
+    assert any(
+        item.rule_id == "OC1001" and item.evidence["query"] == "[get_clocks missing]" for item in result.diagnostics
+    )
+
+
+def test_all_inputs_no_clocks_fails_closed_until_modeled(audit_factory) -> None:
+    query = "[all_inputs -no_clocks]"
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ()
+    assert selector.parse_error == "all_inputs -no_clocks is not modeled by the static backend"
+
+    result = audit_factory(f"set_false_path -from {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["reason"] == selector.parse_error
+    assert not any(item.rule_id in {"OC1001", "OC1002"} for item in result.diagnostics)
+
+
+def test_all_inputs_preserves_pinned_opensta_ignored_positional_arguments(design_factory) -> None:
+    design = design_factory()
+    selector = parse_sdc_text("set_false_path -from [all_inputs ignored extra]\n").commands[0].selectors[0]
+
+    assert selector.parse_error is None
+    assert selector.patterns == ("ignored", "extra")
+    assert resolve_selector(selector, design, {}).matches == {"clk", "clk2", "data", "spare"}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_patterns"),
+    [
+        ("[get_ports -q data]", ("data",)),
+        ("[get_ports -reg {^data$}]", ("^data$",)),
+        ("[get_cells -hier *]", ("*",)),
+    ],
+)
+def test_unambiguous_opensta_option_prefixes_are_accepted(query: str, expected_patterns: tuple[str, ...]) -> None:
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == expected_patterns
+    assert selector.parse_error is None
+
+
+@pytest.mark.parametrize(
+    "option",
+    sorted(
+        ("-cells", "-data_pins", "-clock_pins", "-async_pins", "-output_pins", "-level_sensitive", "-edge_triggered")
+    ),
+)
+def test_all_registers_flag_options_fail_closed(audit_factory, option: str) -> None:
+    query = f"[all_registers {option}]"
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ()
+    assert selector.parse_error == f"all_registers {option} is not modeled by the static backend"
+
+    result = audit_factory(f"set_false_path -from {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["reason"] == selector.parse_error
+
+
+@pytest.mark.parametrize("option", ["-clock", "-rise_clock", "-fall_clock"])
+def test_all_registers_value_options_consume_their_operand_and_fail_closed(audit_factory, option: str) -> None:
+    query = f"[all_registers {option} core]"
+    selector = parse_sdc_text(f"set_false_path -from {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ()
+    assert selector.parse_error == f"all_registers {option} is not modeled by the static backend"
+
+    result = audit_factory(f"set_false_path -from {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["reason"] == selector.parse_error
+
+
+@pytest.mark.parametrize("command_name", ["all_inputs", "all_outputs", "all_clocks", "all_registers"])
+def test_bare_all_selectors_remain_supported(command_name: str) -> None:
+    selector = parse_sdc_text(f"set_false_path -to [{command_name}]\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("*",)
+    assert selector.parse_error is None
+
+
+@pytest.mark.parametrize(
+    "command_name",
+    ["get_cells", "get_clocks", "get_nets", "get_pins", "get_ports", "get_registers"],
+)
+def test_get_query_rejects_multiple_positional_tcl_arguments(audit_factory, command_name: str) -> None:
+    query = f"[{command_name} first second]"
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("first", "second")
+    assert selector.parse_error == f"{command_name} accepts at most one positional pattern-list argument; got 2"
+
+    result = audit_factory(f"set_false_path -to {query}")
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC1004")
+    assert finding.evidence["query"] == query
+    assert finding.evidence["reason"] == selector.parse_error
+    assert not any(item.rule_id in {"OC1001", "OC1002"} for item in result.diagnostics)
+
+
+def test_one_positional_tcl_list_remains_a_valid_multi_pattern_query(design_factory) -> None:
+    design = design_factory()
+    selector = parse_sdc_text("set_false_path -to [get_ports {data result}]\n").commands[0].selectors[0]
+
+    assert selector.patterns == ("data", "result")
+    assert selector.parse_error is None
+    assert resolve_selector(selector, design, {}).matches == {"data", "result"}
+
+
+def test_of_objects_still_ignores_multiple_positional_tcl_arguments(design_factory) -> None:
+    design = design_factory()
+    selector = (
+        parse_sdc_text("set_false_path -to [get_cells first second -of_objects [get_nets q]]\n")
+        .commands[0]
+        .selectors[0]
+    )
+
+    assert selector.patterns == ("first", "second")
+    assert selector.parse_error is None
+    assert resolve_selector(selector, design, {}).matches == {"u_ff", "u_out"}
 
 
 def test_sdc_parser_preserves_cross_option_occurrence_order() -> None:

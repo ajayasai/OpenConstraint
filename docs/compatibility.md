@@ -73,6 +73,15 @@ comparison contract.
 - Exact names, shell-style globs, `-regexp`, and leaf-name matching with
   `-hierarchical`. As in OpenSTA, `-nocase` affects only `-regexp`; it is
   ignored for exact and glob matching.
+- Source-pinned OpenSTA omitted-pattern semantics: a bare `get_ports`,
+  `get_pins`, `get_cells`, `get_nets`, or `get_clocks` query means `*`, while an
+  explicitly empty Tcl pattern remains an empty collection. Broad implicit
+  wildcards remain eligible for OC1002; intentional `all_*` selectors do not.
+- Selector option spelling and positional arity are checked per command.
+  Modeled unambiguous option prefixes follow OpenSTA; invalid options and valid
+  qualifiers outside the documented static subset fail closed as OC1004
+  instead of being reinterpreted as object patterns. Tcl braces suppress
+  nested command substitution, including inside `-of_objects` operands.
 - Filters for object `direction` and sequential-cell truth in the documented
   simple forms.
 - Static nested `-of_objects` connectivity using OpenSTA's source-type matrix:

@@ -740,10 +740,11 @@ def _audit_queries(state: _ModeState, design: Design, options: AuditOptions) -> 
     seen: set[tuple[str, int, str]] = set()
     nested_queries: list[ResolvedQuery] = []
     for query in tuple(state.queries):
-        nested = query.selector.of_objects
-        while nested is not None:
+        pending = list(query.selector.nested_selectors)
+        while pending:
+            nested = pending.pop()
             nested_queries.append(resolve_selector(nested, design, state.clocks))
-            nested = nested.of_objects
+            pending.extend(nested.nested_selectors)
     state.queries.extend(nested_queries)
     for query in state.queries:
         selector = query.selector
@@ -801,7 +802,7 @@ def _audit_queries(state: _ModeState, design: Design, options: AuditOptions) -> 
                 len(query.matches) >= options.broad_match_count
                 or len(query.matches) / max(1, query.universe_size) >= options.broad_match_ratio
             )
-            and selector.kind not in {"all_inputs", "all_outputs", "all_clocks"}
+            and not selector.command_name.startswith("all_")
         )
         if broad:
             _finding(

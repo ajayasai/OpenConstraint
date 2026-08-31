@@ -147,9 +147,13 @@ def test_oc1003_and_oc1004_distinguish_dynamic_from_unsupported_queries(
 
 
 def test_all_registers_selects_sequential_instances_without_false_zero_query(audit_factory) -> None:
-    result = audit_factory("set_false_path -from [all_registers] -to [get_ports result]")
+    result = audit_factory(
+        "set_false_path -from [all_registers] -to [get_ports result]",
+        options=AuditOptions(broad_match_count=1, broad_match_ratio=0.01, broad_match_min_universe=1),
+    )
 
     assert not _find(result, "OC1001")
+    assert not _find(result, "OC1002")
     assert result.modes[0].exceptions[0].from_objects == {"u_ff"}
 
 

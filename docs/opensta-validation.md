@@ -92,3 +92,10 @@ A mismatch is a review signal rather than proof that either representation is
 wrong. Validation does not calculate or certify path timing through
 OpenConstraint, formally prove exceptions, or establish equivalence with a
 commercial sign-off flow.
+
+The public source-pinned integration job also executes focused compatibility
+assertions directly in OpenSTA c821ad1. They verify omitted versus explicitly
+empty `get_*` patterns, Tcl quoting and whitespace preservation, modeled option
+abbreviations, patternless and brace-suppressed `-of_objects`, malformed option
+operands, empty filters, and positional arity before the effective-SDC round
+trip runs.

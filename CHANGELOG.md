@@ -53,6 +53,13 @@ _No changes yet._
 - I/O-delay commands now require exactly one delay and one target collection,
   matching OpenSTA's positional arity and preventing rejected extra targets
   from satisfying missing-delay or coverage obligations.
+- Object-query parsing now distinguishes an omitted OpenSTA-compatible
+  implicit wildcard from an explicitly empty Tcl pattern, rejects malformed
+  option/positional arity instead of broadening it, and exempts intentional
+  `all_*` collections from broad-wildcard warnings. It also preserves Tcl
+  brace-suppressed substitutions, recognizes modeled option abbreviations,
+  rejects explicitly empty filters, and independently audits evaluated nested
+  queries when an outer query is unsupported.
 - Benchmark manifests and baselines reject duplicate JSON keys, excessive
   size, excessive nesting, and excessive node counts before semantic traversal.
 - Release builds pin the backend, bind wheel timestamps to the release commit,
@@ -72,8 +79,8 @@ _No changes yet._
 
 ### Validation
 
-- The reviewed accuracy corpus contains 62 expected diagnostic occurrences
-  across 32 cases and currently gates at 62 true positives, zero false
+- The reviewed accuracy corpus contains 65 expected diagnostic occurrences
+  across 34 cases and currently gates at 65 true positives, zero false
   positives, and zero false negatives for its explicitly scored rule set.
 - The checksum-pinned OpenROAD AES, Ibex, and JPEG suite covers 78,537
   gate-level instances and 6,842 sequential endpoints; all refreshed semantic
@@ -94,7 +101,7 @@ _No changes yet._
   helper calls, making the Tcl boundary explicit without claiming collection
   equivalence or sign-off semantics.
 - Hypothesis parser properties, Atheris/libFuzzer targets, grammar dictionaries,
-  nine seed-corpus inputs, corpus replay tests, scheduled CI fuzzing, and crash
+  ten seed-corpus inputs, corpus replay tests, scheduled CI fuzzing, and crash
   reproducer artifacts.
 
 ### Security

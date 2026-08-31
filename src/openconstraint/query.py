@@ -132,8 +132,10 @@ def _match_pattern(pattern: str, candidates: set[str], selector: Selector) -> tu
 
 def _apply_filter(values: set[str], selector: Selector, design: Design) -> tuple[set[str], str | None]:
     expression = selector.filter_expression
-    if not expression:
+    if expression is None:
         return values, None
+    if not expression.strip():
+        return set(), "empty filter expression"
     direction = re.fullmatch(
         r"\s*direction\s*(?:==|=~)\s*['\"]?(input|output|inout|unknown)['\"]?\s*",
         expression,
@@ -166,6 +168,9 @@ def _apply_filter(values: set[str], selector: Selector, design: Design) -> tuple
 
 
 def resolve_selector(selector: Selector, design: Design, clocks: dict[str, Clock]) -> ResolvedQuery:
+    if selector.parse_error:
+        candidates = _universe(selector, design, clocks)
+        return ResolvedQuery(selector, set(), len(candidates), error=selector.parse_error)
     candidates, universe_error = _related_universe(selector, design, clocks)
     if universe_error:
         return ResolvedQuery(selector, set(), len(candidates), error=universe_error)

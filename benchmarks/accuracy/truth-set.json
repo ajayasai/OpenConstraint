@@ -71,6 +71,23 @@
       ]
     },
     {
+      "id": "explicit-empty-object-query",
+      "description": "Append an exception whose explicitly empty Tcl pattern must remain an empty collection rather than widening to every port.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports {}] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1001",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "dangerously-broad-query",
       "description": "Append an exception that selects every port through a wildcard.",
       "execution": "mutant-only",
@@ -78,6 +95,23 @@
         {
           "kind": "append",
           "text": "set_false_path -from [get_ports *] -to [get_ports result_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC1002",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "implicit-wildcard-query",
+      "description": "Append a bare OpenSTA-compatible get_ports query whose implicit wildcard remains eligible for broad-query review.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "set_false_path -from [get_ports] -to [get_ports result_a]\n"
         }
       ],
       "expected": [
@@ -106,18 +140,18 @@
     },
     {
       "id": "unsupported-query-filter",
-      "description": "Append a query filter outside the deterministic static subset.",
+      "description": "Append query filters that are outside the deterministic static subset or explicitly empty.",
       "execution": "mutant-only",
       "mutations": [
         {
           "kind": "append",
-          "text": "set_false_path -from [get_ports -filter {name == data_a} data_a] -to [get_ports result_a]\n"
+          "text": "set_false_path -from [get_ports -filter {name == data_a} data_a] -to [get_ports result_a]\nset_false_path -from [get_ports -filter {} *] -to [get_ports result_a]\n"
         }
       ],
       "expected": [
         {
           "rule_id": "OC1004",
-          "count": 1
+          "count": 2
         }
       ]
     },

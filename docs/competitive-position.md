@@ -33,10 +33,16 @@ current scope:
 - [Cadence Conformal Constraint Designer](https://www.cadence.com/en_US/home/resources/datasheets/encounter-conformal-constraint-designer-ds.html)
   advertises formal false-path and multicycle validation, constraint/template
   generation, hierarchical checking, CDC analysis, counterexamples, and
-  multi-mode comparison.
+  multi-mode comparison. Cadence's newer
+  [TimeVision](https://www.cadence.com/en_US/home/resources/datasheets/cadence-timevision-solution-ds.html)
+  comparison bar also advertises automatic generation, hierarchy propagation,
+  distributed execution, and multi-billion-instance capacity.
 - [Siemens Gencellicon Constraints Builder](https://www.siemens.com/en-us/products/ic/ic-design/gencellicon/constraints-builder/)
-  advertises formal, hierarchical, multi-mode constraint generation and
-  management from RTL or netlists.
+  advertises automatic hierarchical, multi-mode constraint generation and
+  management from RTL or netlists. The companion
+  [Constraints Certifier](https://www.siemens.com/en-gb/products/ic/ic-design/gencellicon/constraints-certifier/)
+  adds formal exception verification, assertion generation, hierarchy
+  demotion, budgeting, and timing-equivalence checking.
 
 OpenConstraint does not currently provide formal exception proof, full Tcl/SDC
 execution, mixed-language RTL elaboration, automatic signoff-quality constraint

@@ -223,7 +223,13 @@ def parse_tcl(text: str, path: str) -> tuple[list[TclCommand], list[TclParseIssu
 def bracket_body(word: str) -> str | None:
     """Return the body when *word* is exactly one bracket substitution."""
 
-    candidate = unquote(word).strip()
+    stripped = word.strip()
+    # Tcl performs command substitution inside quoted words, but braces make
+    # bracket text literal. Do not turn a brace-suppressed command into an
+    # executable selector in the static model.
+    if len(stripped) >= 2 and stripped[0] == "{" and stripped[-1] == "}":
+        return None
+    candidate = unquote(stripped).strip()
     if not (candidate.startswith("[") and candidate.endswith("]")):
         return None
     depth = 0

@@ -55,14 +55,14 @@ def test_committed_truth_set_has_perfect_reviewed_rule_classification() -> None:
 
     assert summary == {
         "passed": True,
-        "case_count": 32,
-        "defect_case_count": 31,
+        "case_count": 34,
+        "defect_case_count": 33,
         "clean_case_count": 1,
-        "exact_match_case_count": 32,
+        "exact_match_case_count": 34,
         "cases_with_misses": 0,
         "false_pass_cases": 0,
         "false_pass_rate": 0.0,
-        "true_positives": 62,
+        "true_positives": 65,
         "false_positives": 0,
         "false_negatives": 0,
         "precision": 1.0,
@@ -177,15 +177,16 @@ def test_truth_digest_ignores_json_whitespace(tmp_path: Path) -> None:
 
 def test_aggregate_metrics_preserve_case_identity(tmp_path: Path) -> None:
     payload = _json(TRUTH_PATH)
-    payload["cases"][2]["expected"][0]["rule_id"] = "OC1002"
-    payload["cases"][3]["expected"][0]["rule_id"] = "OC1001"
+    cases = {case["id"]: case for case in payload["cases"]}
+    cases["zero-object-query"]["expected"][0]["rule_id"] = "OC1002"
+    cases["dangerously-broad-query"]["expected"][0]["rule_id"] = "OC1001"
     path = tmp_path / "cross-case-swap.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     result = run_accuracy_suite(load_truth_set(path))
     summary = result["summary"]
     assert summary["passed"] is False
-    assert summary["true_positives"] == 60
+    assert summary["true_positives"] == 63
     assert summary["false_positives"] == 2
     assert summary["false_negatives"] == 2
 
