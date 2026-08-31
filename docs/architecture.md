@@ -73,7 +73,7 @@ so moving inputs can intentionally change those fields.
 
 ## Extension boundary
 
-The public v0.1 interface is the CLI and versioned report schema, not internal
+The public 0.x interface is the CLI and versioned report schema, not internal
 Python classes. A custom-rule API is planned only after rule inputs, lifecycle,
 and compatibility guarantees can be versioned safely.
 
@@ -88,3 +88,19 @@ and compatibility guarantees can be versioned safely.
 
 See [compatibility.md](compatibility.md) for the exact parser subset and
 [security-model.md](security-model.md) for trust boundaries.
+
+## Public-design benchmark boundary
+
+The optional benchmark harness sits outside the audit report schema. It loads a
+strict versioned manifest, verifies HTTPS artifacts and checked-in suite inputs
+by exact byte size and SHA-256, safely materializes upstream data in a
+content-addressed cache, and then invokes the same parser and audit layers as
+`openconstraint audit`. Offline mode is a hard network prohibition.
+
+Benchmark results keep deterministic semantic snapshots separate from noisy
+wall-time and traced-memory observations. A semantic baseline is tied to the
+canonical manifest digest and compares an exact structural-inventory digest,
+clock definitions, exception topology, complete coverage components, and
+normalized diagnostic evidence as well as aggregate counts. This makes subtle
+compatibility drift fail CI without pretending that one shared-runner timing
+sample is a reliable performance limit.

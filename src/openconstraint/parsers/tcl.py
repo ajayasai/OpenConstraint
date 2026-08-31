@@ -11,6 +11,10 @@ from dataclasses import dataclass
 
 from openconstraint.model import SourceLocation
 
+MAX_TCL_COMMANDS = 50_000
+MAX_TCL_PARSE_ISSUES = 1_000
+_TRUNCATION_MESSAGE = "Tcl retention limit reached; additional commands or parse issues were omitted"
+
 
 @dataclass(frozen=True, slots=True)
 class TclCommand:
@@ -49,12 +53,23 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
     comment = False
     at_word_start = True
     index = 0
+    truncation_line: int | None = None
+
+    def record_issue(message: str, issue_line: int) -> None:
+        nonlocal truncation_line
+        if len(issues) < MAX_TCL_PARSE_ISSUES:
+            issues.append((message, issue_line))
+        elif truncation_line is None:
+            truncation_line = issue_line
 
     def flush() -> None:
-        nonlocal buffer, start_line, at_word_start
+        nonlocal buffer, start_line, at_word_start, truncation_line
         raw = "".join(buffer).strip()
         if raw:
-            chunks.append((raw, start_line))
+            if len(chunks) < MAX_TCL_COMMANDS:
+                chunks.append((raw, start_line))
+            elif truncation_line is None:
+                truncation_line = start_line
         buffer = []
         start_line = line
         at_word_start = True
@@ -106,7 +121,7 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
             elif char == "}":
                 brace_depth -= 1
                 if brace_depth < 0:
-                    issues.append(("unexpected closing brace", line))
+                    record_issue("unexpected closing brace", line)
                     brace_depth = 0
                 buffer.append(char)
                 at_word_start = False
@@ -117,7 +132,7 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
             elif brace_depth == 0 and char == "]":
                 bracket_depth -= 1
                 if bracket_depth < 0:
-                    issues.append(("unexpected closing bracket", line))
+                    record_issue("unexpected closing bracket", line)
                     bracket_depth = 0
                 buffer.append(char)
                 at_word_start = False
@@ -139,11 +154,13 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
         buffer.append("\\")
     flush()
     if quote:
-        issues.append(("unterminated quoted word", line))
+        record_issue("unterminated quoted word", line)
     if brace_depth:
-        issues.append(("unterminated brace group", line))
+        record_issue("unterminated brace group", line)
     if bracket_depth:
-        issues.append(("unterminated command substitution", line))
+        record_issue("unterminated command substitution", line)
+    if truncation_line is not None:
+        issues.append((_TRUNCATION_MESSAGE, truncation_line))
     return chunks, issues
 
 
@@ -194,11 +211,11 @@ def split_words(command: str) -> tuple[str, ...]:
 
 def parse_tcl(text: str, path: str) -> tuple[list[TclCommand], list[TclParseIssue]]:
     chunks, raw_issues = _command_chunks(text)
-    commands = [
-        TclCommand(raw=raw, words=split_words(raw), location=SourceLocation(path, line, 1))
-        for raw, line in chunks
-        if split_words(raw)
-    ]
+    commands: list[TclCommand] = []
+    for raw, line in chunks:
+        words = split_words(raw)
+        if words:
+            commands.append(TclCommand(raw=raw, words=words, location=SourceLocation(path, line, 1)))
     issues = [TclParseIssue(message, SourceLocation(path, line, 1)) for message, line in raw_issues]
     return commands, issues
 

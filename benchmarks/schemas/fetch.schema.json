@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/benchmark-fetch.schema.json",
+  "title": "OpenConstraint benchmark fetch receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "suite_id", "manifest_sha256", "offline", "artifacts"],
+  "properties": {
+    "kind": {"const": "benchmark-fetch"},
+    "schema_version": {"const": "1.0.0"},
+    "suite_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "offline": {"type": "boolean"},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dataset", "artifact", "sha256", "size_bytes", "license"],
+        "properties": {
+          "dataset": {"type": "string"},
+          "artifact": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 1},
+          "license": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["spdx", "url", "notice"],
+            "properties": {
+              "spdx": {"type": "string", "minLength": 1},
+              "url": {"type": "string", "pattern": "^https://"},
+              "notice": {"type": "string", "minLength": 1},
+              "repository_license_url": {"type": ["string", "null"], "pattern": "^https://"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

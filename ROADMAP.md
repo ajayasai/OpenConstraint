@@ -13,19 +13,26 @@ prioritized through public issues and the governance process.
 - Explicit trusted-input OpenSTA validation with per-mode subprocess isolation,
   finite timeout, effective-SDC provenance, and no bundled OpenSTA binary.
 
-## 0.2 — compatibility and trust
+## 0.2 beta — public evidence and parser resilience
 
-- Expand documented SDC, structural-Verilog, and Liberty subsets from public
-  fixtures.
-- Publish a permissively licensed regression corpus and benchmark method.
-- Improve source spans, suppressions with reason and expiry, and diagnostic
-  baselines for adoption in existing designs.
-- Add property-based and fuzz testing for parsers and report escaping.
-- Expand regression validation against pinned OpenSTA revisions while keeping
-  Tcl execution explicit and outside the default static backend.
+- Checksum-pinned OpenROAD SKY130HD AES, Ibex, and JPEG scale/compatibility
+  benchmarks with reviewed semantic baselines and strict machine-readable
+  manifests.
+- Offline-verifiable acquisition that keeps third-party design data upstream and
+  records exact provenance, licenses, sizes, and digests.
+- Hypothesis properties, seed-corpus replay, and scheduled Atheris/libFuzzer
+  mutation for Tcl/SDC, Verilog, and Liberty parsers.
+- Explicit parser bounds for pathological bus ranges, Liberty nesting, and
+  hierarchical elaboration.
+- Transparent upstream-static versus coverage-reference evidence for Tcl
+  helpers the safe backend deliberately does not execute.
 
 ## 0.3 — extension and flow integration
 
+- Improve source spans, suppressions with reason and expiry, and diagnostic
+  baselines for adoption in existing designs.
+- Expand regression validation against pinned OpenSTA revisions while keeping
+  Tcl execution explicit and outside the default static backend.
 - Versioned custom-rule interface with deterministic inputs and outputs.
 - Richer clock-domain and exception-relationship visualization.
 - Mode-diff policies and reviewable waivers.

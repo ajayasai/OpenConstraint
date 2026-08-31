@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/benchmark-manifest.schema.json",
+  "title": "OpenConstraint benchmark manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite", "suite_files", "datasets"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "suite": {"$ref": "#/$defs/suite"},
+    "suite_files": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/suiteFile"}
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/dataset"}
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "nonempty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "name": {"$ref": "#/$defs/nonempty"},
+        "description": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "suiteFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx", "url", "notice"],
+      "properties": {
+        "spdx": {"$ref": "#/$defs/nonempty"},
+        "url": {"$ref": "#/$defs/httpsUrl"},
+        "notice": {"$ref": "#/$defs/nonempty"},
+        "repository_license_url": {"$ref": "#/$defs/httpsUrl"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "url",
+        "sha256",
+        "size_bytes",
+        "archive",
+        "unpacked_size_limit_bytes",
+        "license"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "url": {"$ref": "#/$defs/httpsUrl"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "archive": {"enum": ["none", "tar.gz", "tar.xz", "zip"]},
+        "unpacked_size_limit_bytes": {"type": "integer", "minimum": 1},
+        "strip_prefix": {
+          "type": "string",
+          "pattern": "^(?:$|(?!/)(?!.*\\\\)(?!.*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*)$"
+        },
+        "filename": {"$ref": "#/$defs/relativePath"},
+        "license": {"$ref": "#/$defs/license"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"archive": {"const": "none"}}, "required": ["archive"]},
+          "then": {"required": ["filename"]},
+          "else": {"not": {"required": ["filename"]}}
+        }
+      ]
+    },
+    "reference": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*:(?!/)(?!.*\\\\)(?!.*:)(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "references": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/reference"}
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "broad_match_count": {"type": "integer", "minimum": 0},
+        "broad_match_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "broad_match_min_universe": {"type": "integer", "minimum": 0},
+        "report_implicit_waveform": {"type": "boolean"}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "top", "verilog", "liberty", "modes"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "description": {"$ref": "#/$defs/nonempty"},
+        "top": {"$ref": "#/$defs/nonempty"},
+        "verilog": {"$ref": "#/$defs/references"},
+        "liberty": {"$ref": "#/$defs/references"},
+        "modes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"$ref": "#/$defs/identifier"},
+          "additionalProperties": {"$ref": "#/$defs/references"}
+        },
+        "tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/identifier"}
+        },
+        "options": {"$ref": "#/$defs/options"}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "artifacts", "cases"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "description": {"$ref": "#/$defs/nonempty"},
+        "artifacts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/artifact"}
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/case"}
+        }
+      }
+    }
+  }
+}

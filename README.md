@@ -2,8 +2,10 @@
 
 [![CI](https://github.com/ajayasai/OpenConstraint/actions/workflows/ci.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ajayasai/OpenConstraint/actions/workflows/codeql.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/codeql.yml)
+[![Benchmarks](https://github.com/ajayasai/OpenConstraint/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/benchmarks.yml)
+[![Parser fuzzing](https://github.com/ajayasai/OpenConstraint/actions/workflows/fuzz.yml/badge.svg)](https://github.com/ajayasai/OpenConstraint/actions/workflows/fuzz.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Status: beta](https://img.shields.io/badge/status-0.1.0--beta-orange.svg)](CHANGELOG.md)
+[![Status: beta](https://img.shields.io/badge/status-0.2.0--beta-orange.svg)](CHANGELOG.md)
 
 OpenConstraint is an open-source, deterministic auditor for Synopsys Design
 Constraints (SDC). It statically reads structural Verilog, relevant Liberty
@@ -17,7 +19,7 @@ HTML clock/exception dashboard. An explicit `--opensta` option can also run
 trusted inputs through a separately installed OpenSTA executable. OpenConstraint
 is built for early feedback and CI policy—not timing sign-off.
 
-> **Beta scope:** v0.1.0-beta is a structural and semantic checker. It does not
+> **Beta scope:** v0.2.0-beta is a structural and semantic checker. It does not
 > calculate delays, formally prove false paths, or certify that a design is
 > correctly constrained for silicon sign-off. The default static backend never
 > executes Tcl. `--opensta` is an explicit trusted-input execution boundary.
@@ -113,6 +115,30 @@ to produce a report without failing on findings. A quality-policy failure exits
 with code 1; invalid CLI or input usage exits with code 2. See
 [CI integration](docs/ci-integration.md) and [report formats](docs/report-formats.md).
 
+## Real-design evidence and continuous parser testing
+
+The public benchmark suite fetches checksum-pinned OpenROAD 26Q3 SKY130HD gate
+netlists instead of committing third-party design data. AES, Ibex, and JPEG
+together exercise 78,537 instances and 6,842 sequential endpoints. Every
+source records its immutable URL, exact byte size, SHA-256, license URL, and
+attribution notice. Exact structural-inventory fingerprints, clocks,
+exceptions, coverage components, and normalized diagnostic evidence are gated
+against a reviewed baseline; timing and traced memory remain observational
+because shared runners are noisy.
+
+The upstream SDC files call an OpenROAD Tcl helper that the safe static backend
+does not execute. Each benchmark therefore records both the raw static result
+and a transparent static-coverage reference. The reference is explicitly not
+claimed to be collection-equivalent sign-off SDC; it makes the parser boundary
+visible instead of mislabeling the upstream constraints as incomplete. See the
+[benchmark method](benchmarks/README.md).
+
+Parser robustness has two layers: Hypothesis properties and corpus replay run
+in the ordinary cross-platform test suite, while Atheris/libFuzzer mutates
+grammar-aware seed corpora on every relevant change and on a weekly extended
+schedule. Crash reproducers are retained as CI artifacts. See the
+[fuzzing guide](fuzz/README.md).
+
 ## Safety model
 
 SDC files are Tcl programs, and evaluating an untrusted SDC file can execute
@@ -136,7 +162,7 @@ The built-in parsers intentionally cover only the constructs needed by the
 current rules. Unsupported syntax is not silently treated as sign-off-clean.
 Review the [compatibility matrix](docs/compatibility.md).
 
-OpenSTA is a separate GPL-3.0-or-later project. v0.1.0-beta can invoke an
+OpenSTA is a separate GPL-3.0-or-later project. v0.2.0-beta can invoke an
 installed executable only when `--opensta` is supplied; it does not link or
 redistribute OpenSTA. Each mode runs in an isolated process with a default
 120-second timeout, and the report records the OpenSTA version and SHA-256 of
@@ -158,6 +184,8 @@ commercial constraint or sign-off product.
 - [Documentation index](docs/index.md)
 - [CLI reference](docs/cli.md)
 - [Architecture](docs/architecture.md)
+- [Public-design benchmarks](benchmarks/README.md)
+- [Parser fuzzing](fuzz/README.md)
 - [Compatibility and limitations](docs/compatibility.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)

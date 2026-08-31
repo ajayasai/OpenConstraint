@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openconstraint"
-version = "0.1.0b0"
+version = "0.2.0b0"
 description = "Deterministic, CI-native SDC constraint-quality auditing and structural coverage"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,12 +28,16 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
   "build>=1.2.2",
+  "hypothesis>=6.167.1",
   "jsonschema>=4.23",
   "mypy>=1.15",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",
   "twine>=6.1",
+]
+fuzz = [
+  "atheris>=3.0,<4; sys_platform == 'linux' and platform_python_implementation == 'CPython'",
 ]
 
 [project.scripts]

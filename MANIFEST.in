@@ -1,3 +1,5 @@
 include LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md
 recursive-include src/openconstraint/schemas *.json
 recursive-include src/openconstraint/demo *.v *.lib *.sdc
+recursive-include fuzz *.py *.md *.dict *.sdc *.v *.lib
+recursive-include benchmarks *.json *.md *.sdc

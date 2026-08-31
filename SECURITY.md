@@ -4,7 +4,8 @@
 
 | Version | Security fixes |
 | --- | --- |
-| Latest 0.1.x beta | Yes |
+| Latest 0.2.x beta | Yes |
+| 0.1.x beta | Critical fixes only |
 | Older pre-release snapshots | No |
 
 ## Report a vulnerability privately

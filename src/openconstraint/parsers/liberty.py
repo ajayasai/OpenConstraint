@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from openconstraint.parsers._text import strip_c_style_comments
+
 
 @dataclass(slots=True)
 class LibertyNode:
@@ -42,18 +44,33 @@ class CellLibrary:
 TOKEN_RE = re.compile(
     r"""
     (?P<space>\s+)
-    |(?P<block>/\*.*?\*/)
-    |(?P<line>//[^\n]*)
     |(?P<string>"(?:\\.|[^"\\])*")
     |(?P<punct>[(){}:;,])
     |(?P<atom>[^\s(){}:;,]+)
     """,
     re.DOTALL | re.VERBOSE,
 )
+MAX_GROUP_DEPTH = 256
+MAX_LIBERTY_TOKENS = 750_000
+MAX_LIBERTY_NODES = 120_000
+MAX_LIBERTY_WARNINGS = 1_000
+LIBERTY_TRUNCATION_WARNING = "Liberty retention limit reached; additional tokens, nodes, or warnings were omitted"
 
 
 def _tokens(text: str) -> list[str]:
-    return [match.group(0) for match in TOKEN_RE.finditer(text) if match.lastgroup not in {"space", "block", "line"}]
+    return _tokenize(text)[0]
+
+
+def _tokenize(text: str) -> tuple[list[str], bool]:
+    without_comments = strip_c_style_comments(text)
+    tokens: list[str] = []
+    for match in TOKEN_RE.finditer(without_comments):
+        if match.lastgroup == "space":
+            continue
+        if len(tokens) >= MAX_LIBERTY_TOKENS:
+            return tokens, True
+        tokens.append(match.group(0))
+    return tokens, False
 
 
 def _clean(token: str) -> str:
@@ -64,10 +81,27 @@ def _clean(token: str) -> str:
 
 
 class _LibertyParser:
-    def __init__(self, tokens: list[str]) -> None:
+    def __init__(self, tokens: list[str], *, truncated: bool = False) -> None:
         self.tokens = tokens
         self.index = 0
         self.warnings: list[str] = []
+        self.retained_nodes = 0
+        self.truncated = truncated
+
+    def warn(self, message: str) -> None:
+        if len(self.warnings) < MAX_LIBERTY_WARNINGS:
+            self.warnings.append(message)
+        else:
+            self.truncated = True
+            self.index = len(self.tokens)
+
+    def retain(self, nodes: list[LibertyNode], node: LibertyNode) -> None:
+        if self.retained_nodes < MAX_LIBERTY_NODES:
+            nodes.append(node)
+            self.retained_nodes += 1
+        else:
+            self.truncated = True
+            self.index = len(self.tokens)
 
     def peek(self) -> str | None:
         return self.tokens[self.index] if self.index < len(self.tokens) else None
@@ -78,12 +112,21 @@ class _LibertyParser:
             self.index += 1
         return value
 
-    def parse(self, stop: str | None = None) -> list[LibertyNode]:
+    def _skip_group(self) -> None:
+        depth = 1
+        while self.peek() is not None and depth:
+            token = self.pop()
+            if token == "{":
+                depth += 1
+            elif token == "}":
+                depth -= 1
+
+    def parse(self, stop: str | None = None, depth: int = 0) -> list[LibertyNode]:
         nodes: list[LibertyNode] = []
         while self.peek() is not None and self.peek() != stop:
             key = self.pop()
             if key in {";", ",", ":", "(", ")", "{"}:
-                self.warnings.append(f"ignored unexpected token {key!r}")
+                self.warn(f"ignored unexpected token {key!r}")
                 continue
             if key == "}":
                 break
@@ -94,23 +137,26 @@ class _LibertyParser:
                     value_tokens.append(self.pop() or "")
                 if self.peek() == ";":
                     self.pop()
-                nodes.append(LibertyNode("@attribute", (str(key),), {"value": " ".join(map(_clean, value_tokens))}))
+                self.retain(
+                    nodes,
+                    LibertyNode("@attribute", (str(key),), {"value": " ".join(map(_clean, value_tokens))}),
+                )
                 continue
             args: list[str] = []
             if self.peek() == "(":
                 self.pop()
-                depth = 1
+                argument_depth = 1
                 current: list[str] = []
-                while self.peek() is not None and depth:
+                while self.peek() is not None and argument_depth:
                     token = self.pop()
                     if token == "(":
-                        depth += 1
+                        argument_depth += 1
                         current.append(token)
                     elif token == ")":
-                        depth -= 1
-                        if depth:
+                        argument_depth -= 1
+                        if argument_depth:
                             current.append(token)
-                    elif token == "," and depth == 1:
+                    elif token == "," and argument_depth == 1:
                         args.append(" ".join(map(_clean, current)).strip())
                         current = []
                     else:
@@ -119,9 +165,14 @@ class _LibertyParser:
                     args.append(" ".join(map(_clean, current)).strip())
             if self.peek() == "{":
                 self.pop()
-                children = self.parse(stop="}")
-                if self.peek() == "}":
-                    self.pop()
+                if depth >= MAX_GROUP_DEPTH:
+                    self.warn(f"ignored group {key!r} nested beyond the parser limit of {MAX_GROUP_DEPTH}")
+                    self._skip_group()
+                    children = []
+                else:
+                    children = self.parse(stop="}", depth=depth + 1)
+                    if self.peek() == "}":
+                        self.pop()
                 attrs: dict[str, str] = {}
                 retained: list[LibertyNode] = []
                 for child in children:
@@ -129,13 +180,13 @@ class _LibertyParser:
                         attrs[child.args[0]] = child.attrs.get("value", "")
                     else:
                         retained.append(child)
-                nodes.append(LibertyNode(str(key), tuple(args), attrs, retained))
+                self.retain(nodes, LibertyNode(str(key), tuple(args), attrs, retained))
             else:
                 while self.peek() is not None and self.peek() not in {";", "}"}:
                     self.pop()
                 if self.peek() == ";":
                     self.pop()
-                nodes.append(LibertyNode(str(key), tuple(args)))
+                self.retain(nodes, LibertyNode(str(key), tuple(args)))
         return nodes
 
 
@@ -154,7 +205,8 @@ def _identifiers(expression: str) -> set[str]:
 
 
 def parse_liberty_text(text: str) -> CellLibrary:
-    parser = _LibertyParser(_tokens(text))
+    tokens, truncated = _tokenize(text)
+    parser = _LibertyParser(tokens, truncated=truncated)
     roots = parser.parse()
     library = CellLibrary(warnings=parser.warnings)
     for cell_node in _walk(roots, "cell"):
@@ -190,6 +242,8 @@ def parse_liberty_text(text: str) -> CellLibrary:
             data_pins=data_pins,
             clock_pins=clock_pins,
         )
+    if parser.truncated:
+        library.warnings.append(LIBERTY_TRUNCATION_WARNING)
     if not library.cells:
         library.warnings.append("no cell groups were found in the Liberty input")
     return library

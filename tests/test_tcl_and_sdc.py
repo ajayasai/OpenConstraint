@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from openconstraint.engine import AuditOptions
+from openconstraint.parsers import tcl as tcl_parser
 from openconstraint.parsers.sdc import parse_sdc_text
-from openconstraint.parsers.tcl import bracket_body, parse_tcl, split_words, unquote
+from openconstraint.parsers.tcl import (
+    MAX_TCL_COMMANDS,
+    MAX_TCL_PARSE_ISSUES,
+    bracket_body,
+    parse_tcl,
+    split_words,
+    unquote,
+)
 from openconstraint.query import resolve_selector
 
 
@@ -62,6 +70,44 @@ def test_tcl_reports_each_unbalanced_delimiter_without_throwing() -> None:
     assert [issue.message for issue in quote_issues] == ["unterminated quoted word"]
     assert [issue.message for issue in bracket_issues] == ["unterminated command substitution"]
     assert [issue.message for issue in closing_issues] == ["unexpected closing bracket"]
+
+
+def test_tcl_caps_retained_commands_but_scans_to_later_parse_issues() -> None:
+    commands, issues = parse_tcl("a;" * (MAX_TCL_COMMANDS + 3) + "]\n", "many-commands.sdc")
+
+    assert len(commands) == MAX_TCL_COMMANDS
+    assert commands[0].words == commands[-1].words == ("a",)
+    assert [issue.message for issue in issues] == [
+        "unexpected closing bracket",
+        "Tcl retention limit reached; additional commands or parse issues were omitted",
+    ]
+    assert issues[-1].location.line == 1
+
+
+def test_tcl_caps_retained_parse_issues_and_adds_one_truncation_issue() -> None:
+    commands, issues = parse_tcl("]\n" * (MAX_TCL_PARSE_ISSUES + 7), "many-issues.sdc")
+
+    assert len(commands) == MAX_TCL_PARSE_ISSUES + 7
+    assert len(issues) == MAX_TCL_PARSE_ISSUES + 1
+    assert all(issue.message == "unexpected closing bracket" for issue in issues[:-1])
+    assert issues[-1].message == "Tcl retention limit reached; additional commands or parse issues were omitted"
+    assert issues[-1].location.line == MAX_TCL_PARSE_ISSUES + 1
+
+
+def test_tcl_parses_each_retained_chunk_words_once(monkeypatch) -> None:
+    original = tcl_parser.split_words
+    calls: list[str] = []
+
+    def counting_split_words(command: str) -> tuple[str, ...]:
+        calls.append(command)
+        return original(command)
+
+    monkeypatch.setattr(tcl_parser, "split_words", counting_split_words)
+    commands, issues = tcl_parser.parse_tcl("set a 1; set b 2\nset c 3\n", "once.sdc")
+
+    assert not issues
+    assert len(commands) == 3
+    assert calls == [command.raw for command in commands]
 
 
 def test_tcl_word_helpers_preserve_grouping_and_reject_partial_brackets() -> None:

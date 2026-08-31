@@ -1,0 +1,85 @@
+name: Parser fuzzing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "fuzz/**"
+      - "pyproject.toml"
+      - "src/openconstraint/parsers/**"
+      - "tests/test_fuzz_seed_corpus.py"
+      - "tests/test_parser_properties.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "fuzz/**"
+      - "pyproject.toml"
+      - "src/openconstraint/parsers/**"
+      - "tests/test_fuzz_seed_corpus.py"
+      - "tests/test_parser_properties.py"
+  schedule:
+    - cron: "23 3 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  atheris:
+    name: Atheris (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [tcl_sdc, verilog, liberty]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and coverage-guided fuzzer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[fuzz]"
+
+      - name: Mutate the committed seed corpus
+        shell: bash
+        run: |
+          mkdir -p fuzz-artifacts
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            budget=(-max_total_time=300)
+          else
+            budget=(-runs=20000)
+          fi
+          python -m "fuzz.fuzz_${{ matrix.target }}" \
+            "fuzz/corpus/${{ matrix.target }}" \
+            "${budget[@]}" \
+            -max_len=1048576 \
+            -rss_limit_mb=1024 \
+            -timeout=10 \
+            "-dict=fuzz/dictionaries/${{ matrix.target }}.dict" \
+            "-artifact_prefix=$PWD/fuzz-artifacts/${{ matrix.target }}-"
+
+      - name: Preserve crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-reproducer-${{ matrix.target }}
+          path: fuzz-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

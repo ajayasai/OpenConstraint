@@ -1,0 +1,6 @@
+library (escaped) {
+  cell ("BUS CELL") {
+    bus ("DATA[3:0]") { direction : input; }
+    pin ("Y") { direction : output; function : "DATA[0]"; }
+  }
+}

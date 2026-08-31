@@ -2,7 +2,7 @@
 
 ## Current model
 
-OpenConstraint v0.1 is maintainer-led. The maintainers listed in
+OpenConstraint's 0.x beta series is maintainer-led. The maintainers listed in
 [MAINTAINERS.md](MAINTAINERS.md) are responsible for releases, security
 decisions, repository administration, and the final resolution of technical
 disagreements. This document describes the project as it exists today; it does

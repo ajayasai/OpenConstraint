@@ -1,6 +1,6 @@
 # OpenConstraint documentation
 
-OpenConstraint v0.1.0-beta performs deterministic, static checks over a
+OpenConstraint v0.2.0-beta performs deterministic, static checks over a
 documented subset of structural Verilog, Liberty, and Tcl/SDC. It is intended
 for lint, review, and CI coverage feedback. It is not a static-timing sign-off
 engine and does not prove timing exceptions.
@@ -15,6 +15,8 @@ engine and does not prove timing exceptions.
 - [CI integration](ci-integration.md)
 - [Named-mode comparison](modes.md)
 - [Opt-in OpenSTA validation](opensta-validation.md)
+- [Public-design benchmark method](../benchmarks/README.md)
+- [Parser fuzzing and seed corpora](../fuzz/README.md)
 
 ## Understand the boundary
 

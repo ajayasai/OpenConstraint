@@ -1,6 +1,6 @@
 # Compatibility and supported subsets
 
-OpenConstraint v0.1.0-beta is intentionally not a complete Verilog, Liberty,
+OpenConstraint v0.2.0-beta is intentionally not a complete Verilog, Liberty,
 Tcl, or SDC implementation. This page defines what the static audit can model.
 Unsupported syntax must be reviewed; it is not evidence of a valid constraint.
 
@@ -25,6 +25,9 @@ Not executed or interpreted:
 
 Malformed grouping produces `OC0001`. Dynamic or unsupported query expressions
 produce `OC1003`/`OC1004` when they occur in modeled constraint positions.
+One input retains at most 50,000 Tcl commands and 1,000 detailed lexer issues;
+the lexer still scans the remaining text and adds one deterministic truncation
+issue when either limit is crossed.
 
 ## SDC commands modeled
 
@@ -63,6 +66,13 @@ and arbitrary collection algebra are not modeled.
 - Simple scalar/bit-select signals and constants at leaf pins.
 - Backslash-escaped identifiers in common structural positions.
 
+Packed buses are limited to 65,536 bits and 65,536 expanded names per
+declaration, with 65,536 connections per instance, 131,072 expanded names,
+200,000 structural statements, 10,000 module occurrences, and 1,000 detailed
+parser warnings per parsed file. Structural hierarchy is limited to 256 module
+levels and 262,144 elaborated nets, instances, and pins. Inputs beyond those
+bounds produce parser warnings and are deterministically truncated.
+
 Behavioral blocks, generate semantics, parameters that require elaboration,
 complex expressions, interfaces, SystemVerilog types, and continuous-assignment
 connectivity are not fully modeled. Some unsupported statements are ignored
@@ -79,6 +89,12 @@ reported design inventory.
 
 Timing arcs, Boolean-function evaluation, operating conditions, units,
 templates, tables, power, and delay values are not evaluated.
+
+Liberty group nesting is limited to 256 levels. Each input retains at most
+750,000 non-whitespace tokens, 120,000 parser nodes, and 1,000 detailed parser
+warnings. Deeper or higher-cardinality content is deterministically truncated
+with one summary warning. These bounds preserve the published SKY130HD corpus,
+which uses 610,986 tokens and fewer than 100,000 total parsed nodes.
 
 When Liberty metadata is absent, the beta can conservatively infer some
 sequential cells and conventional pins from names. Treat inferred structure as
