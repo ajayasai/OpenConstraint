@@ -36,11 +36,15 @@ Each process uses a temporary generated driver that:
 
 The process starts with `-no_init`, `-no_splash`, and `-exit`. OpenConstraint
 captures stdout/stderr, return status, duration, timeout state, executable
-version, and SHA-256 of the effective SDC. Temporary scripts and effective SDC
-files are removed after the mode result is captured.
+version, and a failure reason when applicable. The effective SDC crosses a
+separate all-or-nothing acceptance boundary after the process exits: it must be
+valid UTF-8 and no larger than 16 MiB (16,777,216 bytes). Only an accepted
+snapshot is retained in memory and hashed with SHA-256. Temporary scripts and
+effective SDC files are removed after the mode result is captured.
 
-For a successful mode, the in-memory effective SDC is then audited by the same
-non-executing static rule pipeline used for input SDC. This can expose issues in
+For a successful mode with an accepted snapshot, the in-memory effective SDC is
+then audited by the same non-executing static rule pipeline used for input SDC.
+This can expose issues in
 objects or constraints produced after OpenSTA evaluates trusted Tcl. A finding
 whose rule, message, and evidence are not already present is merged into the
 active mode and top-level diagnostics with an `<opensta-effective:MODE>` source
@@ -63,10 +67,13 @@ snapshots.
 
 ## Failure semantics
 
-A timeout, nonzero return, unsuccessful `check_setup`, or missing effective SDC
-emits error [OC6001](rules/OC6001.md). The report is still written and normal
-severity gating applies. Failure to discover or start the requested executable
-is an operational/input error.
+A timeout, nonzero return, unsuccessful `check_setup`, missing effective SDC,
+snapshot larger than 16 MiB, or snapshot that is not valid UTF-8 emits error
+[OC6001](rules/OC6001.md). For the last two cases, the snapshot text and hash
+are both absent and `effective_audit` is not run; the specific `failure_reason`
+is preserved in the OpenSTA mode summary and diagnostic evidence. The report is
+still written and normal severity gating applies. Failure to discover or start
+the requested executable is an operational/input error.
 
 ## Security boundary
 
@@ -75,6 +82,11 @@ protect the adapter's generated command path; they do not make hostile SDC safe.
 Use only trusted constraints, a trusted pinned executable, a non-privileged
 sandbox, read-only inputs, resource limits, and restricted network/filesystem
 access. Never add `--opensta` to a workflow that runs untrusted fork content.
+
+The 16 MiB effective-snapshot boundary is applied only after OpenSTA finishes.
+It bounds what OpenConstraint retains and re-audits; it does not bound the
+trusted Tcl program's execution, its child processes, or OpenSTA's own memory
+and filesystem use.
 
 Captured stdout/stderr and constraint hashes become part of the JSON/SARIF/HTML
 result data and may be confidential.

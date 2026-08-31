@@ -170,10 +170,18 @@ argument produces a fail-closed diagnostic instead.
 a separately installed `sta`/`opensta` process. Use it only for inputs you trust
 with the runner's permissions. It is never enabled implicitly.
 
-The beta bounds key parser cardinalities, nesting depths, and supported
-glob/regular-expression work, but it does not impose a general file-size,
-memory, CPU, or wall-clock limit. Hostile files should still be processed in an
-OS sandbox with resource quotas. Read the full [security
+The beta accepts at most 16 MiB (16,777,216 bytes) of UTF-8 static SDC source
+per logical mode, cumulatively across that mode's ordered files. A file that is
+not valid UTF-8 or crosses the remaining budget rejects the entire mode as
+`OC0001`; commands from earlier files are not retained as a trusted prefix.
+Parser cardinalities, nesting depths, and supported glob/regular-expression
+work are also bounded; raw Tcl command substitutions, selectors, and literal
+lists stop at 64 grouping levels. Recursive selector parsing shares a document-wide
+16,777,216-character work-and-retention budget and does not retain nested
+source suffixes in a process-global cache. OpenConstraint does not impose a general file-size
+limit on every input type or a complete memory, CPU, or wall-clock quota, so
+hostile files should still be processed in an OS sandbox with resource quotas.
+Read the full [security
 model](docs/security-model.md) and report vulnerabilities privately according
 to [SECURITY.md](SECURITY.md).
 
@@ -186,8 +194,11 @@ Review the [compatibility matrix](docs/compatibility.md).
 OpenSTA is a separate GPL-3.0-or-later project. v0.3.0-beta can invoke an
 installed executable only when `--opensta` is supplied; it does not link or
 redistribute OpenSTA. Each mode runs in a separate process with a default
-120-second timeout, and the report records the OpenSTA version and SHA-256 of
-the effective SDC. See [OpenSTA validation](docs/opensta-validation.md) and
+120-second timeout. An effective SDC snapshot is accepted only when it is valid
+UTF-8 and no larger than a separate 16 MiB limit; accepted snapshots receive a
+SHA-256 and static re-audit. An oversized or invalidly encoded snapshot emits
+`OC6001` and is not retained, hashed, or re-audited. See [OpenSTA
+validation](docs/opensta-validation.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Why open

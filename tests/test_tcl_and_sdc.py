@@ -1,21 +1,144 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from openconstraint.engine import AuditOptions
+from openconstraint.engine import AuditOptions, ModeInput, audit
 from openconstraint.parsers import tcl as tcl_parser
-from openconstraint.parsers.sdc import parse_sdc_text
+from openconstraint.parsers.sdc import parse_sdc, parse_sdc_text
 from openconstraint.parsers.tcl import (
+    MAX_TCL_COMMAND_SUBSTITUTION_NESTING,
     MAX_TCL_COMMANDS,
     MAX_TCL_PARSE_ISSUES,
+    MAX_TCL_WORDS,
+    TclSyntaxError,
     bracket_body,
+    decode_tcl_word,
     parse_tcl,
     split_words,
+    tcl_word_has_substitution,
     unquote,
 )
 from openconstraint.query import resolve_selector
 
 PINNED_GET_COMMANDS = ("get_ports", "get_pins", "get_cells", "get_nets", "get_clocks")
+
+
+def test_tcl_accepts_an_sdc_source_at_the_exact_utf8_byte_limit(monkeypatch) -> None:
+    limit = 32
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    prefix = "set exact 1\n#"
+    source = prefix + "x" * (limit - len(prefix.encode("utf-8")))
+
+    commands, issues = parse_tcl(source, "exact-boundary.sdc")
+
+    assert len(source.encode("utf-8")) == limit
+    assert [command.words for command in commands] == [("set", "exact", "1")]
+    assert not issues
+
+
+def test_tcl_rejects_the_complete_source_at_one_byte_over_the_utf8_limit(monkeypatch) -> None:
+    limit = 32
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    prefix = "set must_not_survive 1\n#"
+    source = prefix + "x" * (limit + 1 - len(prefix.encode("utf-8")))
+
+    commands, issues = parse_tcl(source, "oversized.sdc")
+
+    assert len(source.encode("utf-8")) == limit + 1
+    assert commands == []
+    assert [issue.message for issue in issues] == [f"SDC source exceeds the {limit}-byte UTF-8 input limit"]
+
+
+def test_sdc_file_reread_catches_one_multibyte_byte_over_the_limit_without_a_prefix(monkeypatch, tmp_path) -> None:
+    limit = 32
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    source = "set must_not_survive 1\n#xxx" + "é" * 3
+    path = tmp_path / "multibyte.sdc"
+    path.write_bytes(source.encode("utf-8"))
+    original_stat = type(path).stat
+
+    def stale_stat(target, *args, **kwargs):
+        if target == path:
+            return SimpleNamespace(st_size=limit)
+        return original_stat(target, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "stat", stale_stat)
+
+    document = parse_sdc(path)
+
+    assert len(source) <= limit
+    assert len(source.encode("utf-8")) == limit + 1
+    assert document.commands == []
+    assert [issue.message for issue in document.issues] == [f"SDC source exceeds the {limit}-byte UTF-8 input limit"]
+
+
+def test_sdc_file_reads_the_exact_limit_and_rejects_invalid_utf8_without_a_prefix(monkeypatch, tmp_path) -> None:
+    limit = 32
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    prefix = b"set must_not_survive 1\n#"
+    path = tmp_path / "invalid-utf8.sdc"
+    path.write_bytes(prefix + b"x" * (limit - len(prefix) - 1) + b"\xff")
+
+    document = parse_sdc(path)
+
+    assert path.stat().st_size == limit
+    assert document.commands == []
+    assert [issue.message for issue in document.issues] == ["SDC source is not valid UTF-8"]
+
+
+def test_sdc_mode_accepts_multiple_ordered_files_at_the_exact_cumulative_byte_limit(
+    monkeypatch, tmp_path, design_factory
+) -> None:
+    first_source = "create_clock -name bounded -period 10 [get_ports clk]\n"
+    second_source = "set_input_delay 1 -clock bounded [get_ports data]\n"
+    limit = len(first_source.encode("utf-8")) + len(second_source.encode("utf-8"))
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    first_path = tmp_path / "first-exact.sdc"
+    second_path = tmp_path / "second-exact.sdc"
+    first_path.write_bytes(first_source.encode("utf-8"))
+    second_path.write_bytes(second_source.encode("utf-8"))
+
+    result = audit(
+        design_factory(),
+        [ModeInput("bounded", [str(first_path), str(second_path)])],
+    )
+    mode = result.modes[0]
+
+    assert "bounded" in mode.clocks
+    assert len(mode.io_delays) == 1
+    assert not any(finding.rule_id == "OC0001" for finding in mode.diagnostics)
+
+
+def test_sdc_mode_rejects_one_aggregate_byte_over_without_retaining_an_earlier_file_prefix(
+    monkeypatch, tmp_path, design_factory
+) -> None:
+    first_source = "create_clock -name must_not_survive -period 10 [get_ports clk]\n"
+    second_source = "set_input_delay 1 -clock must_not_survive [get_ports data]\n"
+    second_bytes = len(second_source.encode("utf-8"))
+    limit = len(first_source.encode("utf-8")) + second_bytes - 1
+    monkeypatch.setattr(tcl_parser, "MAX_SDC_INPUT_BYTES", limit)
+    first_path = tmp_path / "first-prefix.sdc"
+    second_path = tmp_path / "second-overflow.sdc"
+    first_path.write_bytes(first_source.encode("utf-8"))
+    second_path.write_bytes(second_source.encode("utf-8"))
+
+    result = audit(
+        design_factory(),
+        [ModeInput("overflow", [str(first_path), str(second_path)])],
+    )
+    mode = result.modes[0]
+    fatal = [finding for finding in mode.diagnostics if finding.rule_id == "OC0001"]
+
+    assert mode.clocks == {}
+    assert mode.io_delays == []
+    assert len(fatal) == 1
+    assert fatal[0].location.path == str(second_path).replace("\\", "/")
+    assert (
+        fatal[0].message == "Malformed Tcl/SDC: SDC source exceeds the remaining "
+        f"{second_bytes - 1}-byte portion of the {limit}-byte cumulative UTF-8 input limit for one constraint mode"
+    )
 
 
 def test_tcl_splits_newlines_and_semicolons_without_splitting_nested_groups() -> None:
@@ -124,6 +247,102 @@ def test_tcl_caps_retained_parse_issues_and_adds_one_truncation_issue() -> None:
     assert all(issue.message == "unexpected closing bracket" for issue in issues[:-1])
     assert issues[-1].message == "Tcl retention limit reached; additional commands or parse issues were omitted"
     assert issues[-1].location.line == MAX_TCL_PARSE_ISSUES + 1
+
+
+def test_tcl_rejects_one_command_over_the_word_retention_limit_without_a_prefix() -> None:
+    commands, issues = parse_tcl("set " + "x " * MAX_TCL_WORDS, "many-words.sdc")
+
+    assert commands == []
+    assert [issue.message for issue in issues] == [f"Tcl command exceeds {MAX_TCL_WORDS} words"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[" * MAX_TCL_COMMAND_SUBSTITUTION_NESTING + "get_ports clk" + "]" * MAX_TCL_COMMAND_SUBSTITUTION_NESTING,
+        '[get_ports "'
+        + "[" * (MAX_TCL_COMMAND_SUBSTITUTION_NESTING - 1)
+        + "list clk"
+        + "]" * (MAX_TCL_COMMAND_SUBSTITUTION_NESTING - 1)
+        + '"]',
+    ],
+)
+def test_tcl_accepts_the_exact_command_substitution_nesting_limit(source: str) -> None:
+    commands, issues = parse_tcl(source, "exact-bracket-depth.sdc")
+
+    assert not issues
+    assert [command.words for command in commands] == [(source,)]
+    assert split_words(source) == (source,)
+    assert bracket_body(source) == source[1:-1]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[" * (MAX_TCL_COMMAND_SUBSTITUTION_NESTING + 1)
+        + "get_ports clk"
+        + "]" * (MAX_TCL_COMMAND_SUBSTITUTION_NESTING + 1),
+        '[get_ports "'
+        + "[" * MAX_TCL_COMMAND_SUBSTITUTION_NESTING
+        + "list clk"
+        + "]" * MAX_TCL_COMMAND_SUBSTITUTION_NESTING
+        + '"]',
+    ],
+)
+def test_tcl_command_substitution_nesting_fails_closed_without_a_partial_document(source: str) -> None:
+    commands, issues = parse_tcl("set retained 1\n" + source, "deep-bracket.sdc")
+
+    assert commands == []
+    assert [issue.message for issue in issues] == [
+        f"Tcl command substitution nesting exceeds {MAX_TCL_COMMAND_SUBSTITUTION_NESTING} levels"
+    ]
+    assert issues[0].location.line == 2
+    with pytest.raises(TclSyntaxError, match="command substitution nesting exceeds"):
+        split_words(source)
+    assert bracket_body(source) is None
+
+
+def test_brackets_inside_braced_variable_names_do_not_consume_substitution_depth() -> None:
+    variable_name = "[" * (MAX_TCL_COMMAND_SUBSTITUTION_NESTING + 1) + "]" * 7
+    query = f"[list ${{{variable_name}}}]"
+    source = f"set value {query}\n"
+
+    commands, issues = parse_tcl(source, "braced-variable.sdc")
+
+    assert not issues
+    assert [command.words for command in commands] == [("set", "value", query)]
+    assert split_words(query) == (query,)
+    assert bracket_body(query) == query[1:-1]
+    assert tcl_word_has_substitution(query) is True
+
+
+def test_closing_bracket_inside_braced_variable_name_does_not_pop_a_command_context() -> None:
+    query = "[list ${name]}]"
+
+    commands, issues = parse_tcl(f"set value {query}\n", "braced-variable-close.sdc")
+
+    assert not issues
+    assert [command.words for command in commands] == [("set", "value", query)]
+    assert split_words(query) == (query,)
+    assert bracket_body(query) == "list ${name]}"
+
+
+def test_braced_variable_name_suppresses_quotes_brackets_and_backslashes() -> None:
+    variable = r'${na"me\[x]}'
+    query = f"[list {variable}]"
+    quoted_word = f'"prefix{variable}suffix"'
+
+    commands, issues = parse_tcl(f"set value {quoted_word}\nset query {query}\n", "braced-variable-token.sdc")
+
+    assert not issues
+    assert [command.words for command in commands] == [
+        ("set", "value", quoted_word),
+        ("set", "query", query),
+    ]
+    assert decode_tcl_word(quoted_word) == f"prefix{variable}suffix"
+    assert split_words(query) == (query,)
+    assert bracket_body(query) == f"list {variable}"
+    assert tcl_word_has_substitution(quoted_word) is True
 
 
 def test_tcl_parses_each_retained_chunk_words_once(monkeypatch) -> None:

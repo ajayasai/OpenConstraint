@@ -7,10 +7,12 @@ default static backend parses but does not execute those files. In particular,
 it never passes SDC to a Tcl interpreter.
 
 This substantially reduces risk compared with evaluating an arbitrary SDC
-program, but it does not make hostile input risk-free. v0.3.0-beta bounds
-pathological Verilog bus expansion, Liberty group nesting, structural hierarchy
-depth, and supported glob/regular-expression matching, but it does not impose a
-general file-size, memory, or runtime quota.
+program, but it does not make hostile input risk-free. v0.3.0-beta enforces a
+16 MiB UTF-8 source budget for each logical SDC mode and a separate 16 MiB
+boundary for an OpenSTA effective snapshot. It also bounds pathological
+Verilog bus expansion, Liberty group nesting, structural hierarchy depth, and
+supported glob/regular-expression matching, but it does not impose a general
+file-size limit across every input type or a complete memory/runtime quota.
 
 ## Assets to protect
 
@@ -27,6 +29,16 @@ general file-size, memory, or runtime quota.
 All input bytes and object names are untrusted. The readers open only paths
 explicitly supplied on the command line. SDC `source`, file access, environment
 lookups, Tcl variables, and command substitutions are not evaluated.
+
+Static SDC loading accepts at most 16 MiB (16,777,216 bytes) of strict UTF-8
+source per logical mode, summed across that mode's files in supplied order. The
+exact limit is accepted. Before retaining a mode's semantics, each file is
+bounded by the remaining aggregate budget and decoded without replacement. If
+a file is not valid UTF-8 or exceeds that remainder, the entire mode fails
+closed as `OC0001`: no commands from that file or an earlier file survive as a
+trusted prefix, and later files are not opened. Direct in-memory parsing applies
+the same 16 MiB UTF-8 boundary to the complete source and likewise returns no
+commands on rejection.
 
 ### Output paths
 
@@ -99,6 +111,13 @@ OpenSTA intentionally evaluates. Apply OS/container isolation and resource
 limits. A timeout of the direct process is not a substitute for controlling
 descendant processes an SDC could create.
 
+After OpenSTA exits, its effective SDC snapshot crosses a separate
+all-or-nothing boundary: at most 16 MiB of strict UTF-8 is accepted. An oversized or
+invalidly encoded snapshot is not retained as text, is not hashed, and is not
+sent through the static re-audit. The mode records a failure reason and emits
+`OC6001`. This post-process boundary does not limit the resources or access
+available while OpenSTA executes the trusted Tcl.
+
 ## Tcl/SDC handling
 
 The lexer understands enough Tcl grouping to identify SDC commands and nested
@@ -114,22 +133,39 @@ positions. A selector substituted into a scalar option or effective scalar
 positional is retained for query auditing but makes the outer command opaque
 (`OC0003`) so its unevaluated source spelling can never become semantic state.
 
-Static selector decoding is bounded to 64 nested selectors. Generic literal
-Tcl-list decoding is separately bounded to 64 grouping levels and 50,000
-elements. Tcl-list errors, invalid Unicode escapes, and nesting beyond those
-bounds produce fail-closed diagnostics rather than a partial or widened
-collection. This is a semantic integrity control, not a complete memory or CPU
-budget.
+Raw Tcl command-substitution grouping is bounded to 64 levels before command
+or selector decoding and rejects the complete document as `OC0001` when
+crossed. Static selector decoding is bounded to 64 nested selectors. Both object-pattern
+lists and generic literal Tcl lists are separately bounded to 64 braced
+grouping levels and 50,000 elements. Tcl-list errors, invalid Unicode escapes,
+and nesting beyond those bounds produce fail-closed diagnostics rather than a
+partial or widened collection. Recursive selector parsing also shares one
+16,777,216-character work-and-retention budget across a document. Command-local
+identity memoization avoids duplicate parsing without retaining attacker-sized
+suffixes globally; an over-budget suffix is represented by at most 256 source
+characters in its diagnostic selector.
 
 Static object matching is also fail-closed and work-bounded. Globs use a
 stack-safe byte-oriented dynamic program capped at 1,000,000 states per
-comparison and 10,000,000 estimated states per collection walk. Regular
-expressions are limited to 4,096 characters, 64 group levels, eight
+comparison. One 10,000,000-unit aggregate budget covers every pattern,
+hierarchy-routing scan, collection comparison, fast-path copy, result
+aggregation, filter, and nested `-of_objects` source in a complete root
+selector resolution. The audit engine applies that budget to the complete
+selector forest of each top-level SDC command, resolves each object once, and
+reuses the result for semantic collection and query diagnostics. Base object
+universes are charged before copying and cached once per forest, so repeated
+exact selectors cannot bypass the aggregate budget. All-object multiplicity
+maps and filter source bytes are also charged before construction or parsing.
+Regular
+expressions are limited to 4,096 characters, 64
+group levels, eight
 quantifiers, one unbounded quantifier and one alternation per path component,
-no repetition in a component with top-level alternation, and 10,000,000
-estimated collection-comparison states. Expressions outside the conservative
-Tcl-ARE/Python shared subset or above those bounds produce `OC1004`; they are
-never silently widened or partially credited.
+no repetition in a component with top-level alternation, and the same aggregate
+selector budget. Expressions outside the conservative Tcl-ARE/Python shared
+subset or above those bounds produce `OC1004`; they are never silently widened
+or partially credited. Separate top-level commands receive independent
+budgets; the input and object-cardinality limits below separately bound their
+number and size.
 
 This guarantee applies to OpenConstraint's built-in static backend. It does not
 make the same SDC safe to load into another Tcl-based EDA tool, including the
@@ -139,11 +175,17 @@ explicit `--opensta` path.
 
 A hostile file can attempt to consume CPU or memory through extreme size,
 identifier count, regular-expression cost, or structure. Targeted limits cap
-glob work at 1,000,000 states per comparison and 10,000,000 per collection;
-regular-expression length at 4,096 characters, nesting at 64, quantifiers at
-eight, and estimated collection work at 10,000,000 states; Tcl retention at
-50,000 commands, selector/literal-list nesting at 64 levels, literal lists at
-50,000 elements, and Tcl detail at 1,000 issues; Liberty retention at 750,000
+static SDC source at 16 MiB of strict UTF-8 cumulatively per logical mode and
+OpenSTA effective-SDC acceptance at a separate 16 MiB; glob work at 1,000,000
+states per comparison and aggregate selector work at 10,000,000 units across
+all patterns, routing, collections, fast paths,
+aggregation, filters, and nested sources; regular-expression length at 4,096
+characters, nesting at 64, and quantifiers at eight; Tcl retention at 50,000
+commands, 50,000 words per command, command-substitution/selector/list nesting
+at 64 levels, pattern
+and literal lists at 50,000 elements, document-wide selector parse/retention
+work at 16,777,216 characters, and Tcl detail at 1,000 issues;
+Liberty retention at 750,000
 tokens, 120,000 nodes, and 1,000 detailed warnings; bus expansion at 65,536
 bits; expanded names at 131,072 per parsed Verilog file; Verilog connections at
 65,536 per instance; structural statements at 200,000; parsed Verilog modules

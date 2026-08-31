@@ -22,7 +22,10 @@ bare/quoted backslash behavior.
 Backslash-newline plus its immediately following spaces/tabs collapses to one
 space even inside quotes and braces; an odd backslash run before a comment
 newline continues that comment. Eight-digit Unicode escapes above the BMP fail
-closed so results do not depend on Tcl 8.6's build-time Unicode width.
+closed so results do not depend on Tcl 8.6's build-time Unicode width. The
+lexer preserves `${...}` variable-name boundaries, so bracket characters in a
+braced variable name do not become command substitutions; the variable still
+fails closed as unevaluated dynamic Tcl.
 
 Numeric command operands are Tcl-word decoded exactly once. Scalar values use
 finite Tcl 8.6 integer spellings or decimal floating-point spellings with Tcl
@@ -47,11 +50,28 @@ commands and project-specific helpers. Either error forces the affected mode's
 trusted coverage to `0.0/F`. Dynamic or unsupported query expressions similarly
 produce error `OC1003`/`OC1004` and force `0.0/F` when they occur in modeled
 constraint positions.
-One input retains at most 50,000 Tcl commands and 1,000 detailed lexer issues;
-the lexer still scans the remaining text and adds one deterministic truncation
-issue when either limit is crossed. A literal Tcl list is limited to 50,000
-elements and 64 grouping levels; selectors are separately limited to 64 nested
-commands.
+
+One logical mode accepts at most 16 MiB (16,777,216 bytes) of strict UTF-8 SDC
+source, cumulatively across its ordered files; an exact-size total is accepted.
+Each file is read against the remaining budget before its commands become mode
+state. Invalid UTF-8 or one byte beyond the remainder rejects the whole mode as
+`OC0001`, discards already parsed documents, and leaves later files unopened,
+so no valid prefix is credited. Direct in-memory parsing applies the same
+all-or-nothing 16 MiB boundary to its complete source.
+
+Within accepted source, the lexer retains at most 50,000 Tcl commands and 1,000
+detailed lexer issues; one command retains at most 50,000 words and is rejected
+without a partial command when that bound is crossed. The lexer still scans the
+remaining text and adds one deterministic truncation issue when the command or
+issue retention limit is crossed. Raw Tcl command substitution is limited to
+64 bracket levels; crossing that structural bound rejects the complete document
+as `OC0001` without retaining an earlier command prefix. A literal Tcl list is
+limited to 50,000 elements and 64 grouping levels; selectors are separately
+limited to 64 nested commands. Selector recognition and recursive bracket-body parsing share one
+16,777,216-character work-and-retention budget across the document. A command
+uses identity memoization only while it is parsed; selector source is never
+held in a process-global cache. Crossing the budget retains only a bounded
+diagnostic spelling and cannot accumulate nested source suffixes.
 
 ## SDC commands modeled
 
@@ -139,8 +159,16 @@ comparison contract.
   Matching follows the pinned OpenSTA UTF-8 byte behavior, so `?` consumes one
   byte rather than one Unicode code point and adjacent stars retain their
   source behavior (`data**` does not match `data`). A single glob comparison is
-  limited to 1,000,000 dynamic-programming states and a collection walk to
-  10,000,000 estimated states; an exceeded limit fails closed as `OC1004`.
+  limited to 1,000,000 dynamic-programming states. A shared 10,000,000-unit
+  budget spans every pattern, hierarchy-routing scan, collection comparison,
+  `*` fast path, result aggregation, filter, and nested `-of_objects` source in
+  the complete selector forest of one top-level SDC command. Each selector
+  object is resolved once, base design collections are precharged and cached
+  once per forest, all-object multiplicities and filter source text are charged
+  before allocation/parsing, and semantic collectors reuse that exact result.
+  Option and positional consumers bind to the exact selector occurrence rather
+  than equal source text. An exceeded limit fails closed as `OC1004` without
+  partial matches or multiplicity credit.
   `-regexp` is anchored to the full comparison name and accepts only the
   conservative subset proven consistent between Tcl ARE and Python regular
   expressions. `(?...)` forms, alphanumeric escapes such as `\b`/`\w` and
@@ -150,10 +178,11 @@ comparison contract.
   quantifiers, and—per path component—one unbounded quantifier and one
   alternation; top-level alternation cannot share a component with a
   quantifier because OpenSTA's raw anchor injection leaves one alternative
-  unanchored at one end. A regexp collection walk is limited to 10,000,000
-  estimated states. These conservative availability limits intentionally
-  reject some valid Tcl ARE expressions rather than risking backend-specific
-  or pathologically expensive behavior. As in OpenSTA, `-nocase` affects only
+  unanchored at one end. Regular-expression processing consumes the same
+  aggregate selector budget. These conservative availability limits
+  intentionally reject some valid Tcl ARE expressions rather than risking
+  backend-specific or pathologically expensive behavior. As in OpenSTA,
+  `-nocase` affects only
   regexp matching; it is ignored for exact/glob matching and for regexp
   components routed through exact lookup.
 - Without `-hierarchical`, exact cell, net, and pin paths compare their complete
@@ -214,11 +243,14 @@ comparison contract.
   Exact bit names such as `data[3]` remain supported.
 
 One `get_*` positional word may be a Tcl pattern list. Static decoding is
-bounded to 64 nested selectors; malformed list structure, invalid Unicode
-escapes, or deeper nesting fails closed as `OC1004` rather than widening or
-partially resolving the query. Malformed decoded words in one of the nine
-modeled commands instead produce `OC0001`; a malformed/dynamic command name is
-outside the allowlist and produces `OC0003`.
+bounded to 50,000 patterns in aggregate per selector—including dynamic or
+otherwise invalid extra positional text—64 braced grouping levels, and 64
+nested selectors;
+malformed list structure, invalid Unicode escapes, or deeper nesting fails
+closed as `OC1004` rather than widening or partially resolving the query.
+Malformed decoded words in one of the nine modeled constraint commands or the
+literal `current_design` context directive instead produce `OC0001`; a
+malformed/dynamic command name is outside the allowlist and produces `OC0003`.
 
 General filter expressions, Tcl-generated patterns, arbitrary collection
 algebra, `get_registers`/clock queries with `-of_objects`, and
@@ -298,18 +330,21 @@ supplied, OpenConstraint discovers `sta`/`opensta` or uses `--opensta-bin`,
 queries its version, and runs one separate process per mode. The generated
 driver reads every supplied Liberty and Verilog file, links the selected top,
 executes the mode's SDC files, runs `check_setup -verbose`, and writes a
-timestamp-free effective SDC whose SHA-256 is recorded. A successful effective
-SDC is then parsed by the same static subset: new semantic diagnostics are
-merged into the active result, and separate normalized static/effective
-semantic digests and effective coverage are reported. The digest includes the
+timestamp-free effective SDC. The snapshot has its own all-or-nothing 16 MiB
+(16,777,216-byte), strict UTF-8 acceptance boundary. An accepted snapshot is
+hashed with SHA-256 and then parsed by the same static subset. New semantic
+diagnostics are merged into the active result, and separate normalized
+static/effective semantic digests and effective coverage are reported. The digest includes the
 canonical active I/O-delay state rather than raw I/O command history. The
 OpenSTA-emitted `current_design` prologue is accepted only as a single literal
 name matching the elaborated top; it never enables general Tcl evaluation or
 hierarchical context switching.
 
-The default timeout is 120 seconds per version query/mode and can be changed
-with `--opensta-timeout`. A failed mode emits OC6001. This validates that the
-installed engine can load and normalize the trusted constraints; it does not
+An oversized or invalidly encoded effective snapshot has no retained text or
+SHA-256 and is not statically re-audited; its failure reason is reported with
+`OC6001`. The default timeout is 120 seconds per version query/mode and can be
+changed with `--opensta-timeout`. Any failed mode emits OC6001. This validates
+that the installed engine can load and normalize the trusted constraints; it does not
 make OpenConstraint a delay-calculation or sign-off-equivalent product. The
 semantic digest compares modeled clocks, exceptions, active I/O delays, and coverage, not arbitrary
 Tcl behavior or formal equivalence. Exact behavior depends on the separately

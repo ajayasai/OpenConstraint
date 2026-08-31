@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
 from pathlib import Path
 
 from openconstraint.model import SourceLocation
+from openconstraint.parsers import tcl as tcl_parser
 from openconstraint.parsers.tcl import (
+    MAX_TCL_LIST_ELEMENTS,
     TclCommand,
     TclParseIssue,
     TclSyntaxError,
@@ -93,6 +94,10 @@ _UNMODELED_SELECTOR_OPTIONS: dict[str, frozenset[str]] = {
 _ALL_SELECTOR_FLAGS = frozenset(option for options in _SELECTOR_FLAG_OPTIONS.values() for option in options)
 _ALL_SELECTOR_VALUES = frozenset(option for options in _SELECTOR_VALUE_OPTIONS.values() for option in options)
 MAX_SELECTOR_NESTING = 64
+MAX_SELECTOR_PARSE_WORK = tcl_parser.MAX_SDC_INPUT_BYTES
+_MAX_SELECTOR_ERROR_RAW_CHARACTERS = 256
+_MAX_SELECTOR_PREFIX_SCAN = 256
+_TCL_SELECTOR_PREFIX_WHITESPACE = " \t\n\v\f\r"
 
 FLAG_OPTIONS = {
     "-add",
@@ -146,11 +151,40 @@ class Selector:
 
 
 @dataclass(slots=True)
+class _SelectorParseBudget:
+    """Bound reparsing and retained selector suffixes for one SDC document."""
+
+    limit: int = field(default_factory=lambda: MAX_SELECTOR_PARSE_WORK)
+    used: int = 0
+
+    def charge(self, characters: int) -> bool:
+        if characters < 0:
+            raise ValueError("selector parse-work charge cannot be negative")
+        if characters > self.limit - self.used:
+            return False
+        self.used += characters
+        return True
+
+
+@dataclass(slots=True)
+class _SelectorParseContext:
+    """Command-local memoization backed by a document-wide work budget."""
+
+    budget: _SelectorParseBudget = field(default_factory=_SelectorParseBudget)
+    # Identity keys avoid hashing an untrusted long word before its work has
+    # been charged. Values retain the word so an object id cannot be reused
+    # while the context remains live.
+    memo: dict[tuple[int, int], tuple[str, Selector | None]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ParsedCommand:
     tcl: TclCommand
     options: dict[str, list[str]] = field(default_factory=dict)
     option_occurrences: list[tuple[str, str]] = field(default_factory=list)
+    option_selector_occurrences: list[tuple[str, str, Selector | None]] = field(default_factory=list)
     positionals: list[str] = field(default_factory=list)
+    positional_selector_occurrences: list[tuple[str, Selector | None]] = field(default_factory=list)
     selectors: list[Selector] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
     opaque_substitutions: list[str] = field(default_factory=list)
@@ -189,6 +223,7 @@ class SdcDocument:
     path: str
     commands: list[ParsedCommand]
     issues: list[TclParseIssue]
+    retained_source_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,15 +385,72 @@ def _normalize_selector_option(command_name: str, word: str) -> str:
     return matches[0] if len(matches) == 1 else value
 
 
-@lru_cache(maxsize=4_096)
 def _parse_selector_body(body: str) -> tuple[tuple[TclCommand, ...], tuple[TclParseIssue, ...]]:
-    """Parse one bracket body once, independent of its outer source location."""
+    """Parse one bracket body without retaining source text process-globally."""
 
     commands, issues = parse_tcl(body, "<selector>")
     return tuple(commands), tuple(issues)
 
 
-def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Selector | None:
+def _could_be_selector_word(word: str) -> bool:
+    """Recognize a possible whole-word bracket selector with bounded lookahead."""
+
+    if not word or word.startswith("{"):
+        return False
+    index = 1 if word.startswith('"') else 0
+    stop = min(len(word), index + _MAX_SELECTOR_PREFIX_SCAN)
+    while index < stop and word[index] in _TCL_SELECTOR_PREFIX_WHITESPACE:
+        index += 1
+    return index < len(word) and index < stop and word[index] == "["
+
+
+def _selector_parse_limit_error(word: str, location: SourceLocation, limit: int) -> Selector:
+    if len(word) <= _MAX_SELECTOR_ERROR_RAW_CHARACTERS:
+        retained_raw = word
+    else:
+        retained_raw = word[: _MAX_SELECTOR_ERROR_RAW_CHARACTERS - 3] + "..."
+    return Selector(
+        command_name="<selector>",
+        kind="unknown",
+        patterns=(),
+        raw=retained_raw,
+        location=location,
+        dynamic=False,
+        parse_error=f"selector parsing exceeds the aggregate static work limit of {limit} characters",
+    )
+
+
+def _parse_selector(
+    word: str,
+    location: SourceLocation,
+    depth: int = 0,
+    *,
+    context: _SelectorParseContext | None = None,
+) -> Selector | None:
+    if not _could_be_selector_word(word):
+        return None
+    if context is None:
+        context = _SelectorParseContext()
+    memo_key = (id(word), depth)
+    cached = context.memo.get(memo_key)
+    if cached is not None and cached[0] is word:
+        return cached[1]
+    if not context.budget.charge(len(word)):
+        # Do not memoize or retain the rejected full suffix. The bounded raw
+        # spelling is enough to join the deterministic OC1004 diagnostic.
+        return _selector_parse_limit_error(word, location, context.budget.limit)
+    parsed = _parse_selector_charged(word, location, depth, context=context)
+    context.memo[memo_key] = (word, parsed)
+    return parsed
+
+
+def _parse_selector_charged(
+    word: str,
+    location: SourceLocation,
+    depth: int,
+    *,
+    context: _SelectorParseContext,
+) -> Selector | None:
     body = bracket_body(word)
     if body is None:
         return None
@@ -410,6 +502,23 @@ def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Sele
     positional_dynamic = False
     positional_count = 0
     parse_errors: list[str] = []
+    pattern_retention_failed = False
+
+    def reject_pattern_retention(message: str) -> None:
+        nonlocal pattern_retention_failed
+        patterns.clear()
+        if not pattern_retention_failed:
+            parse_errors.append(message)
+        pattern_retention_failed = True
+
+    def retain_patterns(items: tuple[str, ...]) -> None:
+        if pattern_retention_failed:
+            return
+        if len(items) > MAX_TCL_LIST_ELEMENTS - len(patterns):
+            reject_pattern_retention(f"{command_name} selector pattern list exceeds {MAX_TCL_LIST_ELEMENTS} elements")
+            return
+        patterns.extend(items)
+
     allowed_flags = _SELECTOR_FLAG_OPTIONS[command_name]
     allowed_values = _SELECTOR_VALUE_OPTIONS[command_name]
     unmodeled_options = _UNMODELED_SELECTOR_OPTIONS.get(command_name, frozenset())
@@ -433,14 +542,16 @@ def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Sele
             else:
                 index += 1
                 operand = words[index]
-                nested = _parse_selector(operand, location, depth + 1)
+                nested = _parse_selector(operand, location, depth + 1, context=context)
                 if nested is not None:
                     nested_selectors.append(nested)
                 if value == "-of_objects":
                     # Tcl evaluates the operand before the outer command
                     # validates whether -of_objects is legal. Retain that
                     # query for independent auditing even if the option fails.
-                    of_objects_raw = operand
+                    of_objects_raw = (
+                        nested.raw if nested is not None and nested.command_name == "<selector>" else operand
+                    )
                     of_objects = nested
                 if supported_by_command and value in unmodeled_options:
                     parse_errors.append(f"{command_name} {value} is not modeled by the static backend")
@@ -464,7 +575,7 @@ def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Sele
             parse_errors.append(f"{command_name} does not support option {value}")
         else:
             positional_count += 1
-            nested = _parse_selector(raw_value, location, depth + 1)
+            nested = _parse_selector(raw_value, location, depth + 1, context=context)
             if nested is not None:
                 nested_selectors.append(nested)
             try:
@@ -477,14 +588,28 @@ def _parse_selector(word: str, location: SourceLocation, depth: int = 0) -> Sele
                 # The substitution result is unknown. Preserve bracket-aware
                 # grouping for deterministic nested-query diagnostics rather
                 # than pretending its source text is an evaluated Tcl list.
-                patterns.extend(item for item in split_words(value) if item)
+                if not pattern_retention_failed:
+                    try:
+                        remaining = MAX_TCL_LIST_ELEMENTS - len(patterns)
+                        retain_patterns(split_words(value, max_words=remaining))
+                    except TclSyntaxError:
+                        reject_pattern_retention(
+                            f"{command_name} selector pattern list exceeds {MAX_TCL_LIST_ELEMENTS} elements"
+                        )
             elif command_name.startswith("get_"):
-                try:
-                    patterns.extend(split_tcl_list_preserving_backslashes(value))
-                except TclSyntaxError as error:
-                    parse_errors.append(f"{command_name} has malformed Tcl pattern list: {error}")
+                if not pattern_retention_failed:
+                    try:
+                        remaining = MAX_TCL_LIST_ELEMENTS - len(patterns)
+                        retain_patterns(split_tcl_list_preserving_backslashes(value, max_elements=remaining))
+                    except TclSyntaxError as error:
+                        if " elements" in str(error):
+                            reject_pattern_retention(
+                                f"{command_name} selector pattern list exceeds {MAX_TCL_LIST_ELEMENTS} elements"
+                            )
+                        else:
+                            reject_pattern_retention(f"{command_name} has malformed Tcl pattern list: {error}")
             elif value:
-                patterns.append(value)
+                retain_patterns((value,))
         index += 1
     # OpenSTA's get_* commands accept zero or one positional Tcl argument.
     # That one word may itself be a Tcl list containing multiple patterns.
@@ -563,16 +688,27 @@ def _canonical_modeled_option(value: str, grammar: _CommandGrammar) -> tuple[str
     return None
 
 
-def _record_option(parsed: ParsedCommand, option: str, value: str) -> None:
+def _record_option(
+    parsed: ParsedCommand,
+    option: str,
+    value: str,
+    selector: Selector | None = None,
+) -> None:
     parsed.options.setdefault(option, []).append(value)
     parsed.option_occurrences.append((option, value))
+    parsed.option_selector_occurrences.append((option, value, selector))
 
 
-def _parse_modeled_command(parsed: ParsedCommand, words: list[str], grammar: _CommandGrammar) -> None:
+def _parse_modeled_command(
+    parsed: ParsedCommand,
+    words: list[str],
+    grammar: _CommandGrammar,
+    context: _SelectorParseContext,
+) -> None:
     index = 0
     while index < len(words):
         raw_word = words[index]
-        selector = _parse_selector(raw_word, parsed.location)
+        selector = _parse_selector(raw_word, parsed.location, context=context)
         value = _decode_command_argument(parsed, raw_word)
         if _is_keyword(value):
             option = _canonical_modeled_option(value, grammar)
@@ -588,23 +724,35 @@ def _parse_modeled_command(parsed: ParsedCommand, words: list[str], grammar: _Co
                 else:
                     index += 1
                     raw_operand = words[index]
-                    operand_selector = _parse_selector(raw_operand, parsed.location)
+                    operand_selector = _parse_selector(raw_operand, parsed.location, context=context)
                     operand = _decode_command_argument(parsed, raw_operand)
                     # Keep the source spelling for evaluated collections so
                     # selector.raw remains a stable join key in the engine.
                     # Non-selector values use their Tcl-decoded spelling.
+                    selector_operand = (
+                        operand_selector.raw
+                        if operand_selector is not None and operand_selector.command_name == "<selector>"
+                        else raw_operand
+                    )
+                    associated_selector = (
+                        replace(operand_selector, option=canonical) if operand_selector is not None else None
+                    )
                     _record_option(
                         parsed,
                         canonical,
-                        raw_operand if operand_selector is not None else operand,
+                        selector_operand if operand_selector is not None else operand,
+                        associated_selector,
                     )
-                    if operand_selector is not None:
-                        parsed.selectors.append(replace(operand_selector, option=canonical))
+                    if associated_selector is not None:
+                        parsed.selectors.append(associated_selector)
                         if canonical not in _COLLECTION_SELECTOR_OPTIONS.get(parsed.name, frozenset()):
                             parsed.opaque_substitutions.append(raw_operand)
         else:
             positional_index = len(parsed.positionals)
-            parsed.positionals.append(raw_word if selector is not None else value)
+            selector_word = selector.raw if selector is not None and selector.command_name == "<selector>" else raw_word
+            positional_value = selector_word if selector is not None else value
+            parsed.positionals.append(positional_value)
+            parsed.positional_selector_occurrences.append((positional_value, selector))
             if selector is not None:
                 parsed.selectors.append(selector)
                 if _selector_positional_is_opaque(parsed.name, positional_index):
@@ -612,7 +760,7 @@ def _parse_modeled_command(parsed: ParsedCommand, words: list[str], grammar: _Co
         index += 1
 
 
-def _parse_current_design(parsed: ParsedCommand, words: list[str]) -> None:
+def _parse_current_design(parsed: ParsedCommand, words: list[str], context: _SelectorParseContext) -> None:
     """Parse OpenSTA's direct one-argument context command.
 
     Unlike the constraint commands, ``current_design`` does not use
@@ -621,21 +769,24 @@ def _parse_current_design(parsed: ParsedCommand, words: list[str]) -> None:
     """
 
     for raw_word in words:
-        selector = _parse_selector(raw_word, parsed.location)
+        selector = _parse_selector(raw_word, parsed.location, context=context)
         value = _decode_command_argument(parsed, raw_word)
-        parsed.positionals.append(raw_word if selector is not None else value)
+        selector_word = selector.raw if selector is not None and selector.command_name == "<selector>" else raw_word
+        positional_value = selector_word if selector is not None else value
+        parsed.positionals.append(positional_value)
+        parsed.positional_selector_occurrences.append((positional_value, selector))
         if selector is not None:
             parsed.selectors.append(selector)
             parsed.opaque_substitutions.append(raw_word)
 
 
-def _parse_generic_command(parsed: ParsedCommand, words: list[str]) -> None:
+def _parse_generic_command(parsed: ParsedCommand, words: list[str], context: _SelectorParseContext) -> None:
     """Retain the broad parser for commands outside the modeled audit set."""
 
     index = 0
     while index < len(words):
         word = words[index]
-        selector = _parse_selector(word, parsed.location)
+        selector = _parse_selector(word, parsed.location, context=context)
         if selector:
             parsed.selectors.append(selector)
         if len(word) >= 2 and word[0] == "-" and word[1].isalpha():
@@ -644,19 +795,22 @@ def _parse_generic_command(parsed: ParsedCommand, words: list[str]) -> None:
             elif index + 1 < len(words):
                 index += 1
                 value = words[index]
-                _record_option(parsed, word, value)
-                nested = _parse_selector(value, parsed.location)
-                if nested:
-                    parsed.selectors.append(replace(nested, option=word))
+                nested = _parse_selector(value, parsed.location, context=context)
+                associated_selector = replace(nested, option=word) if nested is not None else None
+                _record_option(parsed, word, value, associated_selector)
+                if associated_selector is not None:
+                    parsed.selectors.append(associated_selector)
             else:
                 _record_option(parsed, word, "")
         else:
             parsed.positionals.append(word)
+            parsed.positional_selector_occurrences.append((word, selector))
         index += 1
 
 
-def _parse_command(command: TclCommand) -> ParsedCommand:
+def _parse_command(command: TclCommand, selector_budget: _SelectorParseBudget | None = None) -> ParsedCommand:
     parsed = ParsedCommand(tcl=command)
+    context = _SelectorParseContext(selector_budget or _SelectorParseBudget())
     words = list(command.words[1:])
     if command.words:
         try:
@@ -671,20 +825,20 @@ def _parse_command(command: TclCommand) -> ParsedCommand:
             if message not in parsed.parse_errors:
                 parsed.parse_errors.append(message)
             continue
-        if active_substitution and _parse_selector(word, command.location) is None:
+        if active_substitution and _parse_selector(word, command.location, context=context) is None:
             parsed.opaque_substitutions.append(word)
 
     grammar = _COMMAND_GRAMMARS.get(command.name)
     if command.name == "current_design":
-        _parse_current_design(parsed, words)
+        _parse_current_design(parsed, words, context)
         if len(parsed.positionals) != 1:
             parsed.parse_errors.append(
                 f"current_design requires exactly one literal design name; got {len(parsed.positionals)}"
             )
     elif grammar is None:
-        _parse_generic_command(parsed, words)
+        _parse_generic_command(parsed, words, context)
     else:
-        _parse_modeled_command(parsed, words, grammar)
+        _parse_modeled_command(parsed, words, grammar, context)
         if command.name in {"set_false_path", "set_clock_groups"} and parsed.positionals:
             parsed.parse_errors.append(f"{command.name} accepts no positional operands; got {len(parsed.positionals)}")
     return parsed
@@ -692,9 +846,44 @@ def _parse_command(command: TclCommand) -> ParsedCommand:
 
 def parse_sdc_text(text: str, path: str = "<memory>") -> SdcDocument:
     commands, issues = parse_tcl(text, path)
-    return SdcDocument(path=path, commands=[_parse_command(command) for command in commands], issues=issues)
+    selector_budget = _SelectorParseBudget()
+    return SdcDocument(
+        path=path,
+        commands=[_parse_command(command, selector_budget) for command in commands],
+        issues=issues,
+    )
 
 
-def parse_sdc(path: str | Path) -> SdcDocument:
+def parse_sdc(path: str | Path, *, max_bytes: int | None = None) -> SdcDocument:
     source = Path(path)
-    return parse_sdc_text(source.read_text(encoding="utf-8"), str(source))
+    source_path = str(source)
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be non-negative")
+    global_limit = tcl_parser.MAX_SDC_INPUT_BYTES
+    limit = global_limit if max_bytes is None else min(max_bytes, global_limit)
+
+    def rejected(message: str) -> SdcDocument:
+        issue = TclParseIssue(message, SourceLocation(source_path, 1, 1))
+        return SdcDocument(path=source_path, commands=[], issues=[issue])
+
+    limit_message = (
+        f"SDC source exceeds the {limit}-byte UTF-8 input limit"
+        if max_bytes is None
+        else (
+            f"SDC source exceeds the remaining {limit}-byte portion of the {global_limit}-byte "
+            "cumulative UTF-8 input limit for one constraint mode"
+        )
+    )
+    if source.stat().st_size > limit:
+        return rejected(limit_message)
+    with source.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        return rejected(limit_message)
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return rejected("SDC source is not valid UTF-8")
+    document = parse_sdc_text(text, source_path)
+    document.retained_source_bytes = len(raw)
+    return document

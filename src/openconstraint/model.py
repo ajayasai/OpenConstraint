@@ -141,14 +141,19 @@ class Design:
         return {pin.path for instance in self.sequential_instances for pin in instance.pins.values() if pin.is_clock}
 
     def objects(self, kind: str) -> set[str]:
-        mapping = {
-            "ports": set(self.ports),
-            "pins": set(self.pins),
-            "cells": set(self.instances),
-            "nets": set(self.nets),
-            "registers": {item.path for item in self.sequential_instances},
-        }
-        return mapping.get(kind, set())
+        # Build only the requested collection.  Constructing a literal
+        # mapping here eagerly copied every design index for each query.
+        if kind == "ports":
+            return set(self.ports)
+        if kind == "pins":
+            return set(self.pins)
+        if kind == "cells":
+            return set(self.instances)
+        if kind == "nets":
+            return set(self.nets)
+        if kind == "registers":
+            return {item.path for item in self.sequential_instances}
+        return set()
 
 
 @dataclass(slots=True)

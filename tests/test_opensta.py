@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import openconstraint.cli as cli
 import openconstraint.opensta as opensta
 from openconstraint.cli import _merge_opensta, _mode_semantics
 from openconstraint.engine import AuditOptions, ModeInput, audit
@@ -307,6 +308,83 @@ def test_nonzero_check_result_preserves_output_and_effective_sdc(
     assert mode.stderr == "setup warnings\n"
     assert mode.effective_sdc == payload.decode("utf-8")
     assert mode.effective_sdc_hash == sha256(payload).hexdigest()
+
+
+def test_effective_sdc_accepts_snapshot_at_exact_size_limit(tmp_path: Path) -> None:
+    snapshot = tmp_path / "effective.sdc"
+    payload = b"#" * opensta.MAX_EFFECTIVE_SDC_BYTES
+    snapshot.write_bytes(payload)
+
+    text, digest, failure_reason = opensta._effective_sdc(snapshot)
+
+    assert text is not None
+    assert len(text) == opensta.MAX_EFFECTIVE_SDC_BYTES
+    assert digest == sha256(payload).hexdigest()
+    assert failure_reason is None
+
+
+def test_oversize_effective_sdc_fails_without_payload_hash_or_reaudit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    audit_factory,
+    design_factory,
+) -> None:
+    verilog, liberty, functional_sdc, _ = _inputs(tmp_path)
+    fake_binary = str((tmp_path / "sta").resolve())
+    oversize_payload = b"#" * (opensta.MAX_EFFECTIVE_SDC_BYTES + 1)
+
+    monkeypatch.setattr(opensta.shutil, "which", lambda _candidate: fake_binary)
+    monkeypatch.setattr(
+        opensta,
+        "sha256",
+        lambda _payload: pytest.fail("oversize snapshot must not be hashed"),
+    )
+
+    def run(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ("-version",):
+            return subprocess.CompletedProcess(command, 0, "OpenSTA 3.0.1\n", "")
+        Path(command[-1]).with_name("effective.sdc").write_bytes(oversize_payload)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(opensta.subprocess, "run", run)
+    validation = validate_with_opensta(
+        [verilog], [liberty], "top", {"functional": functional_sdc}, binary="sta", timeout=3.0
+    )
+    mode = validation.modes[0]
+
+    assert not mode.succeeded
+    assert mode.effective_sdc is None
+    assert mode.effective_sdc_sha256 is None
+    assert mode.failure_reason is not None
+    assert "exceeds the 16 MiB" in mode.failure_reason
+
+    result = audit_factory("create_clock -name core -period 10 [get_ports clk]\n")
+    monkeypatch.setattr(
+        cli,
+        "audit_sdc_text",
+        lambda *_args, **_kwargs: pytest.fail("oversize snapshot must not be re-audited"),
+    )
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    finding = next(item for item in result.diagnostics if item.rule_id == "OC6001")
+    assert "failed: OpenSTA effective SDC snapshot exceeds the 16 MiB" in finding.message
+    assert finding.evidence["failure_reason"] == mode.failure_reason
+    public_mode = result.summary["opensta"]["modes"][0]
+    assert public_mode["effective_sdc_sha256"] is None
+    assert public_mode["effective_audit"] is None
+    assert public_mode["failure_reason"] == mode.failure_reason
+
+
+def test_effective_sdc_rejects_invalid_utf8_without_hash(tmp_path: Path) -> None:
+    snapshot = tmp_path / "effective.sdc"
+    snapshot.write_bytes(b"create_clock \xff\n")
+
+    text, digest, failure_reason = opensta._effective_sdc(snapshot)
+
+    assert text is None
+    assert digest is None
+    assert failure_reason is not None
+    assert "not valid UTF-8" in failure_reason
 
 
 def test_mode_timeout_is_a_captured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

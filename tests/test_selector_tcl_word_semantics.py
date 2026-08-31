@@ -197,7 +197,7 @@ def test_dynamic_nested_selector_is_retained_for_independent_audit(audit_factory
     )
 
 
-def test_pathological_selector_nesting_fails_closed_without_recursion_error(audit_factory) -> None:
+def test_pathological_command_substitution_nesting_fails_closed_without_recursion_error(audit_factory) -> None:
     query = "leaf"
     for _ in range(1_000):
         query = f"[get_ports {query}]"
@@ -205,7 +205,7 @@ def test_pathological_selector_nesting_fails_closed_without_recursion_error(audi
     result = audit_factory(f"set_false_path -to {query}\n")
 
     assert any(
-        finding.rule_id == "OC1004" and "selector nesting exceeds" in finding.evidence["reason"]
+        finding.rule_id == "OC0001" and "command substitution nesting exceeds" in finding.message
         for finding in result.diagnostics
     )
     assert result.modes[0].coverage.score == 0.0

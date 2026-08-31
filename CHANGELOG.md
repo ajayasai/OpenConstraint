@@ -33,6 +33,9 @@ _No changes yet._
   transformations, malformed I/O-delay relationships, incomplete slot
   coverage, redundant exception definitions, ordered-through overlap, and
   exact generated-clock reference failures.
+- Tcl/SDC fuzz seeds for literal `current_design` context and selector grammar
+  boundaries, increasing the reviewed cross-parser seed corpus from nine to
+  eleven inputs.
 
 ### Changed
 
@@ -64,6 +67,8 @@ _No changes yet._
   diagnostic evidence.
 - Tcl backslash-newline folding now consumes following spaces/tabs in every
   lexical context and preserves Tcl's odd/even comment-continuation behavior.
+  Brackets inside `${...}` variable names remain inert during lexical grouping
+  even though variable evaluation itself stays outside the static subset.
   Selector substitutions in scalar options or effective scalar positionals
   fail the outer command closed as `OC0003`, while documented collection-valued
   selector roles remain static;
@@ -86,9 +91,26 @@ _No changes yet._
   malformed Tcl lists, and invalid Unicode escapes now fail closed. Sequential
   truth filtering is limited to the explicit `get_registers` extension.
 - Glob matching now follows pinned OpenSTA UTF-8 byte and adjacent-star
-  semantics with stack-safe dynamic programming and per-comparison/collection
-  work limits. Regular expressions have explicit length, nesting, quantifier,
-  top-level-alternation/repetition, ambiguity, and collection-work limits.
+  semantics with stack-safe dynamic programming and a per-comparison limit.
+  One aggregate budget now spans every pattern, hierarchy-routing scan,
+  collection comparison, `*` fast path, aggregation, filter, and nested
+  `-of_objects` source in a root selector resolution. Pattern Tcl lists share
+  one aggregate 50,000-element/64-level bound per selector, including dynamic
+  or otherwise invalid extra positional text; commands retain at most 50,000
+  words before failing without a partial command. Raw Tcl command-substitution
+  grouping is limited to 64 levels and rejects the complete document without a
+  parsed prefix when crossed. Recursive selector parsing
+  now has one 16,777,216-character document budget, command-local identity
+  memoization, bounded error spellings, and no process-global suffix cache.
+  Each top-level SDC command resolves its complete selector forest once under
+  one aggregate work budget and reuses those results in semantic collectors and
+  diagnostics. Base object universes are precharged and cached once per forest,
+  all-object multiplicities and filter source text are precharged, and
+  equal-text option/positional operands retain exact occurrence identity so a
+  healthy sibling cannot mask a failed or literal effective operand. Semantic
+  reuse no longer rebuilds literal candidate unions. Regular
+  expressions have explicit length, nesting, quantifier,
+  top-level-alternation/repetition, ambiguity, and aggregate-work limits.
   Escaped hierarchy dividers and bus-range-shaped patterns fail closed instead
   of being misresolved by the flattened structural model.
 - Non-ANSI packed port declarations no longer leave aggregate-name ghost ports
@@ -132,6 +154,20 @@ _No changes yet._
   replacement so an external hard-link alias cannot truncate a cached blob or
   materialization.
 
+### Security
+
+- Static SDC input now has an all-or-nothing 16 MiB UTF-8 budget shared by all
+  ordered files in one logical mode. Exact-size input is accepted; an invalidly
+  encoded file or a file exceeding the remaining budget emits `OC0001`,
+  discards earlier documents, and leaves later files unopened so no parsed
+  prefix survives. Direct in-memory parsing enforces the same source boundary.
+- Tcl command-substitution grouping now fails closed at 64 levels in command
+  chunking, word splitting, and whole-selector recognition, preventing an
+  attacker-sized lexical context stack from preceding selector validation.
+- OpenSTA effective snapshots have a separate all-or-nothing 16 MiB, strict
+  UTF-8 boundary. Oversized or invalidly encoded output emits `OC6001` with a
+  failure reason and is not retained, hashed, or statically re-audited.
+
 ### Validation
 
 - The reviewed accuracy corpus contains 67 expected diagnostic occurrences
@@ -156,7 +192,7 @@ _No changes yet._
   helper calls, making the Tcl boundary explicit without claiming collection
   equivalence or sign-off semantics.
 - Hypothesis parser properties, Atheris/libFuzzer targets, grammar dictionaries,
-  ten seed-corpus inputs, corpus replay tests, scheduled CI fuzzing, and crash
+  nine seed-corpus inputs, corpus replay tests, scheduled CI fuzzing, and crash
   reproducer artifacts.
 
 ### Security

@@ -148,6 +148,7 @@ def test_schema_validates_optional_opensta_summary(
                 "timed_out": True,
                 "duration_seconds": 120.0,
                 "effective_sdc_sha256": None,
+                "failure_reason": "OpenSTA validation timed out.",
                 "stdout": "partial output",
                 "stderr": "timed out",
                 "effective_audit": None,
@@ -159,6 +160,7 @@ def test_schema_validates_optional_opensta_summary(
                 "timed_out": False,
                 "duration_seconds": 0.125,
                 "effective_sdc_sha256": "a" * 64,
+                "failure_reason": None,
                 "stdout": "",
                 "stderr": "",
                 "effective_audit": None,
@@ -264,6 +266,7 @@ def test_schema_rejects_incomplete_opensta_mode(
                 "timed_out": False,
                 "duration_seconds": 0.2,
                 "effective_sdc_sha256": None,
+                "failure_reason": None,
                 "stdout": "",
                 "effective_audit": None,
             }

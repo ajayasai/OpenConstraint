@@ -7,7 +7,8 @@ traced from source input to evidence and report output.
 Verilog files ──> structural reader ─┐
 Liberty files ──> cell metadata ─────┼─> design index
                                     │
-SDC files ──────> non-executing Tcl lexer ─> SDC command/query model
+SDC files ──────> cumulative 16 MiB UTF-8 gate per mode
+                                    └─> non-executing Tcl lexer ─> SDC command/query model
                                     │
                                     v
                            deterministic audit engine
@@ -27,7 +28,7 @@ An explicit optional branch runs after the static audit:
 
 ```text
 --opensta ─> one separate trusted-input OpenSTA process per mode
-          └> check_setup + effective-SDC capture
+          └> check_setup + 16 MiB/UTF-8 effective-SDC capture
                          ├─> failure ─> OC6001
                          └─> success ─> same static audit pipeline
                                         ├─> unique diagnostics merged
@@ -36,6 +37,14 @@ An explicit optional branch runs after the static audit:
 
 ## Input layers
 
+The ordered SDC files for one logical mode share a 16 MiB (16,777,216-byte)
+strict UTF-8 source budget. Files are checked against the remaining aggregate
+before their commands become mode state. If a file exceeds the remainder or is
+not valid UTF-8, the engine discards all documents already parsed for that mode
+and does not open later files. The resulting zero-command rejection document
+flows through the normal pipeline as `OC0001`, preventing partial-prefix
+semantics. Direct in-memory sources use the same complete-source boundary.
+
 The Tcl lexer separates commands and words while tracking braces, quotes,
 brackets, comments, continuations, and source locations. It does not evaluate
 the tokens. The SDC layer has an exact allowlist of nine constraint commands
@@ -43,6 +52,9 @@ plus a literal `current_design` context directive, a distinct option/operand
 grammar for each modeled command, and command-specific object-query grammars.
 The context name must match the elaborated top. Every other top-level command
 fails closed as `OC0003` rather than being assumed inert.
+Recursive selector parsing has a document-wide 16,777,216-character
+work-and-retention budget and command-local identity memoization. It therefore
+does not keep a global cache of nested source suffixes.
 
 The Liberty reader extracts leaf-cell pin direction, sequential groups, data
 pins, clock pins, and declared combinational dependencies from output
@@ -63,7 +75,12 @@ Each named mode is analyzed independently:
    connectivity, work-bounded OpenSTA-compatible byte globs, complexity-bounded
    anchored common-subset regular expressions, current-scope/hierarchy naming,
    component-level regexp routing, and collection multiplicity, against the
-   design index. Decode literal object lists separately and invalidate the
+   design index. Resolve the complete selector forest of each top-level command
+   once under one aggregate budget, then reuse those results for semantic
+   collection and diagnostics. Precharge and cache each base object universe
+   once per forest, charge all-object multiplicities and filter text before
+   processing, and preserve exact option/positional selector occurrences.
+   Decode literal object lists separately and invalidate the
    dependent command if any leaf is malformed or unresolved.
 4. Propagate clocks only through declared Liberty input/output dependencies;
    stop and invalidate incomplete structural models rather than assuming
@@ -97,14 +114,18 @@ driver for each mode. The driver reads the supplied libraries and netlists,
 links the top, executes that mode's SDC files, runs `check_setup -verbose`, and
 writes a timestamp-free effective SDC. OpenConstraint launches an argument
 vector with `shell=False`, captures stdout/stderr, applies the configured
-timeout, hashes the effective SDC with SHA-256, and deletes the temporary
-directory. On success, the in-memory effective SDC is passed through the same
-non-executing static audit. Diagnostics not already present by normalized rule,
+timeout, and then accepts only a strict-UTF-8 effective snapshot no larger than
+a separate 16 MiB limit. On acceptance it hashes the snapshot with SHA-256 and
+passes the in-memory text through the same non-executing static audit.
+Diagnostics not already present by normalized rule,
 message, and evidence are merged into the mode; the report also records the
 effective audit's coverage and diagnostic count plus SHA-256 digests of modeled
 static/effective clocks, exceptions, canonical active I/O-delay state, and
 coverage. The effective model does not replace the original mode, and
 cross-mode findings are not recomputed from it.
+An oversized or invalidly encoded snapshot instead retains no text or hash,
+skips the re-audit, records a failure reason, and emits `OC6001`. The temporary
+directory is deleted after either result is captured.
 OpenSTA is not imported, linked, or redistributed.
 
 ## Determinism

@@ -24,6 +24,7 @@ from openconstraint.model import (
     SourceLocation,
     effective_io_delay_semantics,
 )
+from openconstraint.parsers import tcl as tcl_parser
 from openconstraint.parsers.sdc import (
     MODELED_SDC_COMMANDS,
     ParsedCommand,
@@ -33,7 +34,7 @@ from openconstraint.parsers.sdc import (
     parse_sdc_text,
 )
 from openconstraint.parsers.tcl import TclSyntaxError, split_tcl_list
-from openconstraint.query import ResolvedQuery, has_glob, resolve_selector
+from openconstraint.query import ResolvedQuery, has_glob, resolve_selector_forest
 from openconstraint.version import __version__
 
 STRUCTURAL_WARNING_SAMPLE_LIMIT = 50
@@ -268,16 +269,17 @@ def _finding(
 def _selectors_for(command: ParsedCommand) -> list[Selector]:
     """Return only positional collection selectors for a command target."""
 
-    return [selector for selector in command.selectors if selector.option is None]
+    return [selector for _, selector in command.positional_selector_occurrences if selector is not None]
 
 
 def _resolve_many(
-    selectors: Iterable[Selector], design: Design, clocks: dict[str, Clock]
+    selectors: Iterable[Selector],
+    resolutions_by_id: dict[int, ResolvedQuery],
 ) -> tuple[set[str], list[ResolvedQuery]]:
     matches: set[str] = set()
     resolutions: list[ResolvedQuery] = []
     for selector in selectors:
-        resolved = resolve_selector(selector, design, clocks)
+        resolved = resolutions_by_id[id(selector)]
         resolutions.append(resolved)
         matches.update(resolved.matches)
     return matches, resolutions
@@ -286,12 +288,14 @@ def _resolve_many(
 def _literal_targets(command: ParsedCommand, design: Design, *, allow_nets: bool) -> tuple[set[str], list[str]]:
     targets: set[str] = set()
     problems: list[str] = []
-    candidates = set(design.ports) | set(design.pins)
-    if allow_nets:
-        candidates.update(design.nets)
-    for value in command.positionals:
-        if any(selector.option is None and selector.raw == value for selector in command.selectors):
+    candidates: set[str] | None = None
+    for value, selector in command.positional_selector_occurrences:
+        if selector is not None:
             continue
+        if candidates is None:
+            candidates = set(design.ports) | set(design.pins)
+            if allow_nets:
+                candidates.update(design.nets)
         _, literal_targets, unknown, error = _literal_collection(value, candidates)
         targets.update(literal_targets)
         if error is not None:
@@ -491,18 +495,20 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
             is_generated = command.name == "create_generated_clock"
             if command.name not in {"create_clock", "create_generated_clock"} or is_generated != generated_pass:
                 continue
+            command_resolutions = resolve_selector_forest(command.selectors, design, state.clocks)
+            resolutions_by_id = {id(resolution.selector): resolution for resolution in command_resolutions}
+            state.queries.extend(command_resolutions)
             if command.parse_errors or command.opaque_substitutions:
                 # Tcl evaluates nested collection commands before invoking the
                 # outer command. Audit those selectors, but never construct a
                 # clock from a command whose outer argument semantics are not
                 # statically trustworthy.
-                state.queries.extend(resolve_selector(selector, design, state.clocks) for selector in command.selectors)
                 continue
             selectors = _selectors_for(command)
             allowed_target_kinds = {"ports", "pins", "all_inputs", "all_outputs"}
             if is_generated:
                 allowed_target_kinds.add("nets")
-            resolutions = [resolve_selector(selector, design, state.clocks) for selector in selectors]
+            resolutions = [resolutions_by_id[id(selector)] for selector in selectors]
             targets = {
                 match
                 for resolution in resolutions
@@ -535,7 +541,6 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                             f"net {target!r} has multiple driver ports/pins: {', '.join(drivers)}"
                         )
                 targets = converted_targets
-            state.queries.extend(resolutions)
             target_argument_present = bool(command.positionals)
             definition_invalid = False
             source_targets: set[str] = set()
@@ -546,8 +551,7 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                 source_word = command.option("-source")
                 source_selector = _option_selector(command, "-source", source_word)
                 if source_selector:
-                    source_result = resolve_selector(source_selector, design, state.clocks)
-                    state.queries.append(source_result)
+                    source_result = resolutions_by_id[id(source_selector)]
                     source_targets.update(source_result.matches)
                     source_match_count = source_result.match_count
                     source_collection_valid = source_result.error is None and not source_result.unmatched_patterns
@@ -650,8 +654,7 @@ def _build_clocks(state: _ModeState, design: Design) -> None:
                 master_collection_valid = True
                 master_selector_type_valid = True
                 if master_selector is not None:
-                    master_result = resolve_selector(master_selector, design, state.clocks)
-                    state.queries.append(master_result)
+                    master_result = resolutions_by_id[id(master_selector)]
                     master_selector_type_valid = master_selector.kind in {"clocks", "all_clocks"}
                     master_names.update(name for name in master_result.matches if name in state.clocks)
                     master_match_count = master_result.match_count
@@ -848,22 +851,9 @@ def _propagate_clock(design: Design, targets: set[str]) -> tuple[set[str], set[s
     return reached_nets, reached_pins
 
 
-def _audit_queries(state: _ModeState, design: Design, options: AuditOptions) -> None:
-    seen: set[tuple[str, int, str]] = set()
-    nested_queries: list[ResolvedQuery] = []
-    for query in tuple(state.queries):
-        pending = list(query.selector.nested_selectors)
-        while pending:
-            nested = pending.pop()
-            nested_queries.append(resolve_selector(nested, design, state.clocks))
-            pending.extend(nested.nested_selectors)
-    state.queries.extend(nested_queries)
+def _audit_queries(state: _ModeState, options: AuditOptions) -> None:
     for query in state.queries:
         selector = query.selector
-        identity = (selector.location.path, selector.location.line, selector.raw)
-        if identity in seen:
-            continue
-        seen.add(identity)
         if query.error:
             _finding(
                 state,
@@ -1081,8 +1071,9 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                 )
             if command.name in {"create_clock", "create_generated_clock"}:
                 continue
-            resolutions = [resolve_selector(selector, design, active_clocks) for selector in command.selectors]
-            state.queries.extend(resolutions)
+            command_resolutions = resolve_selector_forest(command.selectors, design, active_clocks)
+            resolutions_by_id = {id(resolution.selector): resolution for resolution in command_resolutions}
+            state.queries.extend(command_resolutions)
             if command.parse_errors or command.opaque_substitutions or unsupported_command:
                 if (
                     command.opaque_substitutions
@@ -1100,6 +1091,7 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                         command,
                         design,
                         "input" if command.name == "set_input_delay" else "output",
+                        resolutions_by_id,
                     )
                     del state.io_delays[io_delay_count:]
                     state.delayed_inputs = delayed_inputs
@@ -1120,11 +1112,11 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                     )
                 continue
             if command.name == "set_input_delay":
-                _collect_io_delay(state, command, design, "input")
+                _collect_io_delay(state, command, design, "input", resolutions_by_id)
             elif command.name == "set_output_delay":
-                _collect_io_delay(state, command, design, "output")
+                _collect_io_delay(state, command, design, "output", resolutions_by_id)
             elif command.name in {"set_false_path", "set_multicycle_path", "set_max_delay", "set_min_delay"}:
-                exception = _exception_from_command(command, design, active_clocks)
+                exception = _exception_from_command(command, design, active_clocks, resolutions_by_id)
                 definition_problems = exception.qualifiers.get("definition_problems", [])
                 if isinstance(definition_problems, list) and definition_problems:
                     _finding(
@@ -1143,7 +1135,7 @@ def _collect_nonclock_constraints(state: _ModeState, design: Design) -> None:
                     _reset_prior_exceptions(state, exception)
                 state.exceptions.append(exception)
             elif command.name == "set_clock_groups":
-                state.exceptions.extend(_clock_group_exceptions(state, command, design))
+                state.exceptions.extend(_clock_group_exceptions(state, command, design, resolutions_by_id))
 
 
 def _literal_collection(
@@ -1216,19 +1208,24 @@ def _option_selector(command: ParsedCommand, option: str, value: str | None) -> 
 
     if value is None:
         return None
-    return next(
-        (selector for selector in reversed(command.selectors) if selector.option == option and selector.raw == value),
-        None,
-    )
+    for recorded_option, recorded_value, selector in reversed(command.option_selector_occurrences):
+        if recorded_option == option and recorded_value == value:
+            return selector
+    return None
 
 
-def _clock_references(command: ParsedCommand, design: Design, clocks: dict[str, Clock]) -> tuple[set[str], bool]:
+def _clock_references(
+    command: ParsedCommand,
+    design: Design,
+    clocks: dict[str, Clock],
+    resolutions_by_id: dict[int, ResolvedQuery],
+) -> tuple[set[str], bool]:
     clock_word = command.option("-clock")
     if clock_word is None:
         return set(), True
     selector = _option_selector(command, "-clock", clock_word)
     if selector is not None:
-        resolution = resolve_selector(selector, design, clocks)
+        resolution = resolutions_by_id[id(selector)]
         names = {name for name in resolution.matches if name in clocks}
         valid = (
             selector.kind in {"clocks", "all_clocks"}
@@ -1247,18 +1244,20 @@ def _clock_references(command: ParsedCommand, design: Design, clocks: dict[str, 
 
 
 def _reference_pin(
-    command: ParsedCommand, design: Design, clocks: dict[str, Clock]
+    command: ParsedCommand,
+    design: Design,
+    clocks: dict[str, Clock],
+    resolutions_by_id: dict[int, ResolvedQuery],
 ) -> tuple[str | None, bool, set[str]]:
     """Resolve ``-reference_pin`` with OpenSTA's singular port/pin contract."""
 
     raw = command.option("-reference_pin")
     if raw is None:
         return None, True, set()
-    candidates = set(design.ports) | set(design.pins)
     selector = _option_selector(command, "-reference_pin", raw)
     if selector is not None:
-        resolution = resolve_selector(selector, design, clocks)
-        matches = resolution.matches & candidates
+        resolution = resolutions_by_id[id(selector)]
+        matches = set(resolution.matches) if selector.kind in {"ports", "pins", "all_inputs", "all_outputs"} else set()
         valid = (
             selector.kind in {"ports", "pins", "all_inputs", "all_outputs"}
             and resolution.error is None
@@ -1268,6 +1267,7 @@ def _reference_pin(
             and not selector.dynamic
         )
     else:
+        candidates = set(design.ports) | set(design.pins)
         elements, matches, unknown, error = _literal_singleton(raw, candidates)
         dynamic = "$" in raw or raw.lstrip().startswith("[")
         valid = error is None and not unknown and len(elements) == 1 and len(matches) == 1 and not dynamic
@@ -1275,24 +1275,29 @@ def _reference_pin(
     return reference_pin, valid, matches
 
 
-def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design, kind: str) -> None:
+def _collect_io_delay(
+    state: _ModeState,
+    command: ParsedCommand,
+    design: Design,
+    kind: str,
+    resolutions_by_id: dict[int, ResolvedQuery],
+) -> None:
     active_clocks = _active_clocks(state)
     delay_word = command.positionals[0] if command.positionals else None
     delay = _number(delay_word)
-    target_words = command.positionals[1:]
+    target_entries = command.positional_selector_occurrences[1:]
+    target_words = [value for value, _ in target_entries]
     target_selectors = [
         selector
-        for selector in command.selectors
-        if selector.option is None
-        and selector.raw in target_words
-        and selector.kind in {"ports", "all_inputs", "all_outputs"}
+        for _, selector in target_entries
+        if selector is not None and selector.kind in {"ports", "all_inputs", "all_outputs"}
     ]
-    ports, _ = _resolve_many(target_selectors, design, active_clocks)
+    ports, _ = _resolve_many(target_selectors, resolutions_by_id)
     target_collection_valid = True
     target_collection_unknown: list[str] = []
     target_collection_errors: list[str] = []
-    for word in target_words:
-        if any(selector.option is None and selector.raw == word for selector in command.selectors):
+    for word, selector in target_entries:
+        if selector is not None:
             continue
         elements, literal_ports, unknown, error = _literal_collection(word, set(design.ports))
         ports.update(literal_ports)
@@ -1361,7 +1366,7 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
             },
         )
 
-    clocks, clock_valid = _clock_references(command, design, active_clocks)
+    clocks, clock_valid = _clock_references(command, design, active_clocks, resolutions_by_id)
     if clocks and not clocks.issubset(state.valid_clocks):
         clock_valid = False
     if command.option("-clock") is None:
@@ -1387,7 +1392,9 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
             {"command": command.name, "clock": command.option("-clock"), "ports": sorted(ports)},
         )
 
-    reference_pin, reference_valid, reference_matches = _reference_pin(command, design, active_clocks)
+    reference_pin, reference_valid, reference_matches = _reference_pin(
+        command, design, active_clocks, resolutions_by_id
+    )
     reference_word = command.option("-reference_pin")
     if reference_word is not None and not reference_valid:
         _finding(
@@ -1702,30 +1709,30 @@ def _collect_multicycle(state: _ModeState, command: ParsedCommand, exception: Ex
 
 
 def _objects_from_word(
-    command: ParsedCommand,
     value: str,
+    selector: Selector | None,
     design: Design,
     clocks: dict[str, Clock],
+    resolutions_by_id: dict[int, ResolvedQuery],
     *,
     allowed_selector_kinds: frozenset[str],
 ) -> tuple[set[str], set[str], list[str]]:
-    selectors = [selector for selector in command.selectors if selector.raw == value]
-    valid_selectors = [selector for selector in selectors if selector.kind in allowed_selector_kinds]
-    invalid_kinds = {selector.kind for selector in selectors if selector.kind not in allowed_selector_kinds}
-    values_resolved, _ = _resolve_many(valid_selectors, design, clocks)
-    candidates: set[str] = set()
-    if allowed_selector_kinds & {"ports", "all_inputs", "all_outputs"}:
-        candidates.update(design.ports)
-    if "pins" in allowed_selector_kinds:
-        candidates.update(design.pins)
-    if "cells" in allowed_selector_kinds:
-        candidates.update(design.instances)
-    if allowed_selector_kinds & {"clocks", "all_clocks"}:
-        candidates.update(clocks)
-    if "nets" in allowed_selector_kinds:
-        candidates.update(design.nets)
+    valid_selectors = [selector] if selector is not None and selector.kind in allowed_selector_kinds else []
+    invalid_kinds = {selector.kind} if selector is not None and selector.kind not in allowed_selector_kinds else set()
+    values_resolved, _ = _resolve_many(valid_selectors, resolutions_by_id)
     literal_problems: list[str] = []
-    if not selectors:
+    if selector is None:
+        candidates: set[str] = set()
+        if allowed_selector_kinds & {"ports", "all_inputs", "all_outputs"}:
+            candidates.update(design.ports)
+        if "pins" in allowed_selector_kinds:
+            candidates.update(design.pins)
+        if "cells" in allowed_selector_kinds:
+            candidates.update(design.instances)
+        if allowed_selector_kinds & {"clocks", "all_clocks"}:
+            candidates.update(clocks)
+        if "nets" in allowed_selector_kinds:
+            candidates.update(design.nets)
         _, literal_matches, unknown, error = _literal_collection(value, candidates)
         values_resolved.update(literal_matches)
         if error is not None:
@@ -1765,21 +1772,29 @@ def _end_transition(command: ParsedCommand) -> str:
     return "rise_fall"
 
 
-def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict[str, Clock]) -> ExceptionPath:
+def _exception_from_command(
+    command: ParsedCommand,
+    design: Design,
+    clocks: dict[str, Clock],
+    resolutions_by_id: dict[int, ResolvedQuery],
+) -> ExceptionPath:
     from_options = ("-from", "-rise_from", "-fall_from")
     to_options = ("-to", "-rise_to", "-fall_to")
     from_entry = _selected_exception_option(command, from_options)
     to_entry = _selected_exception_option(command, to_options)
+    from_selector = _option_selector(command, from_entry[0], from_entry[1]) if from_entry is not None else None
+    to_selector = _option_selector(command, to_entry[0], to_entry[1]) if to_entry is not None else None
     endpoint_kinds = frozenset(
         {"clocks", "all_clocks", "cells", "registers", "ports", "pins", "all_inputs", "all_outputs"}
     )
     through_kinds = frozenset({"cells", "registers", "ports", "pins", "nets", "all_inputs", "all_outputs"})
     from_objects, invalid_from_kinds, from_literal_problems = (
         _objects_from_word(
-            command,
             from_entry[1],
+            from_selector,
             design,
             clocks,
+            resolutions_by_id,
             allowed_selector_kinds=endpoint_kinds,
         )
         if from_entry is not None
@@ -1787,26 +1802,32 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
     )
     to_objects, invalid_to_kinds, to_literal_problems = (
         _objects_from_word(
-            command,
             to_entry[1],
+            to_selector,
             design,
             clocks,
+            resolutions_by_id,
             allowed_selector_kinds=endpoint_kinds,
         )
         if to_entry is not None
         else (set(), set(), [])
     )
     through_options = {"-through", "-rise_through", "-fall_through"}
-    through_entries = [(option, value) for option, value in command.option_occurrences if option in through_options]
+    through_entries = [
+        (option, value, selector)
+        for option, value, selector in command.option_selector_occurrences
+        if option in through_options
+    ]
     resolved_through = [
         _objects_from_word(
-            command,
             value,
+            selector,
             design,
             clocks,
+            resolutions_by_id,
             allowed_selector_kinds=through_kinds,
         )
-        for _, value in through_entries
+        for _, value, selector in through_entries
     ]
     through_groups = tuple(frozenset(objects) for objects, _, _ in resolved_through)
     invalid_through_kinds = set().union(*(kinds for _, kinds, _ in resolved_through)) if resolved_through else set()
@@ -1840,17 +1861,16 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
     definition_problems.extend(f"to scope {problem}" for problem in to_literal_problems)
     for index, problems in enumerate(through_literal_problems, start=1):
         definition_problems.extend(f"through scope {index} {problem}" for problem in problems)
-    from_has_selector = bool(
-        from_entry is not None and any(selector.raw == from_entry[1] for selector in command.selectors)
-    )
-    to_has_selector = bool(to_entry is not None and any(selector.raw == to_entry[1] for selector in command.selectors))
+    from_has_selector = from_selector is not None
+    to_has_selector = to_selector is not None
     if from_specified and not from_objects and not from_has_selector:
         definition_problems.append("the specified from scope resolves to no objects")
     if to_specified and not to_objects and not to_has_selector:
         definition_problems.append("the specified to scope resolves to no objects")
-    for index, (group, (_, word)) in enumerate(zip(through_groups, through_entries, strict=True), start=1):
-        has_selector = any(selector.raw == word for selector in command.selectors)
-        if not group and not has_selector:
+    for index, (group, (_, _, through_selector)) in enumerate(
+        zip(through_groups, through_entries, strict=True), start=1
+    ):
+        if not group and through_selector is None:
             definition_problems.append(f"specified through scope {index} resolves to no objects")
     has_implicit_end_scope = command.has("-rise") or command.has("-fall")
     if not from_specified and not to_specified and not through_entries and not has_implicit_end_scope:
@@ -1876,7 +1896,7 @@ def _exception_from_command(command: ParsedCommand, design: Design, clocks: dict
         "end_transition": _end_transition(command),
         "through_transitions": [
             "rise" if option == "-rise_through" else "fall" if option == "-fall_through" else "rise_fall"
-            for option, _ in through_entries
+            for option, _, _ in through_entries
         ],
         "from_specified": from_specified,
         "to_specified": to_specified,
@@ -1947,20 +1967,26 @@ def _reset_prior_exceptions(state: _ModeState, reset: ExceptionPath) -> None:
     ]
 
 
-def _clock_group_exceptions(state: _ModeState, command: ParsedCommand, design: Design) -> list[ExceptionPath]:
+def _clock_group_exceptions(
+    state: _ModeState,
+    command: ParsedCommand,
+    design: Design,
+    resolutions_by_id: dict[int, ResolvedQuery],
+) -> list[ExceptionPath]:
     active_clocks = _active_clocks(state)
     groups: list[set[str]] = []
     group_problems: list[list[str]] = []
-    for group_word in command.options.get("-group", []):
-        selectors = [
-            selector for selector in command.selectors if selector.option == "-group" and selector.raw == group_word
-        ]
+    group_entries = [
+        (value, selector) for option, value, selector in command.option_selector_occurrences if option == "-group"
+    ]
+    for group_word, group_selector in group_entries:
+        selectors = [group_selector] if group_selector is not None else []
         allowed_selector_kinds = {"clocks", "all_clocks"}
         valid_selectors = [selector for selector in selectors if selector.kind in allowed_selector_kinds]
         invalid_selector_kinds = sorted(
             {selector.kind for selector in selectors if selector.kind not in allowed_selector_kinds}
         )
-        matches, resolutions = _resolve_many(valid_selectors, design, active_clocks)
+        matches, resolutions = _resolve_many(valid_selectors, resolutions_by_id)
         problems_for_group: list[str] = []
         if invalid_selector_kinds:
             problems_for_group.append("selectors must return clocks, not " + ", ".join(invalid_selector_kinds))
@@ -2478,7 +2504,7 @@ def _audit_documents(name: str, documents: list[SdcDocument], design: Design, op
     _build_clocks(state, design)
     pin_to_clocks = _audit_clocks(state, design, options)
     _collect_nonclock_constraints(state, design)
-    _audit_queries(state, design, options)
+    _audit_queries(state, options)
     _audit_exceptions(state)
     _audit_multicycles(state)
     _audit_io_delays(state)
@@ -2497,7 +2523,21 @@ def _audit_documents(name: str, documents: list[SdcDocument], design: Design, op
 
 
 def _audit_mode(name: str, paths: list[str], design: Design, options: AuditOptions) -> ModeResult:
-    return _audit_documents(name, [parse_sdc(path) for path in paths], design, options)
+    remaining_bytes = tcl_parser.MAX_SDC_INPUT_BYTES
+    documents: list[SdcDocument] = []
+    for path in paths:
+        document = parse_sdc(path, max_bytes=remaining_bytes)
+        retained_bytes = document.retained_source_bytes
+        if retained_bytes is None:
+            # A rejected source makes the ordered logical mode incomplete.
+            # Discard earlier documents so the audit never trusts a prefix of
+            # a mode that exceeded its cumulative input budget or contained
+            # bytes that could not be decoded as UTF-8.
+            documents = [document]
+            break
+        remaining_bytes -= retained_bytes
+        documents.append(document)
+    return _audit_documents(name, documents, design, options)
 
 
 def audit_sdc_text(

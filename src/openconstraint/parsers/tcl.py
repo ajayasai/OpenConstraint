@@ -12,11 +12,18 @@ from dataclasses import dataclass
 from openconstraint.model import SourceLocation
 
 MAX_TCL_COMMANDS = 50_000
+MAX_TCL_WORDS = 50_000
 MAX_TCL_PARSE_ISSUES = 1_000
 MAX_TCL_LIST_ELEMENTS = 50_000
 MAX_TCL_LIST_NESTING = 64
+MAX_TCL_COMMAND_SUBSTITUTION_NESTING = 64
+MAX_SDC_INPUT_BYTES = 16 * 1024 * 1024
 _TRUNCATION_MESSAGE = "Tcl retention limit reached; additional commands or parse issues were omitted"
+_COMMAND_SUBSTITUTION_NESTING_MESSAGE = (
+    f"Tcl command substitution nesting exceeds {MAX_TCL_COMMAND_SUBSTITUTION_NESTING} levels"
+)
 _TCL_WHITESPACE = " \t\n\v\f\r"
+_UTF8_SIZE_CHUNK_CHARACTERS = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +68,23 @@ class _TclLexContext:
 
     brace_depth: int = 0
     quote: bool = False
+    braced_variable: bool = False
     at_word_start: bool = True
     at_command_start: bool = True
+
+
+def _push_command_substitution_context(
+    contexts: list[_TclLexContext],
+    *,
+    includes_file_context: bool,
+) -> None:
+    """Push one ``[...]`` level without retaining an attacker-sized stack."""
+
+    file_contexts = 1 if includes_file_context else 0
+    current_depth = len(contexts) - file_contexts
+    if current_depth >= MAX_TCL_COMMAND_SUBSTITUTION_NESTING:
+        raise TclSyntaxError(_COMMAND_SUBSTITUTION_NESTING_MESSAGE)
+    contexts.append(_TclLexContext())
 
 
 def _backslash_substitution(text: str, index: int) -> tuple[str, int]:
@@ -123,6 +145,19 @@ def _decode_backslashes(text: str) -> str:
     decoded: list[str] = []
     index = 0
     while index < len(text):
+        if text[index] == "$" and index + 1 < len(text) and text[index + 1] == "{":
+            closing = text.find("}", index + 2)
+            if closing < 0:
+                raise TclSyntaxError("missing close-brace for Tcl variable name")
+            for variable_index in range(index + 2, closing):
+                variable_char = text[variable_index]
+                if 0xD800 <= ord(variable_char) <= 0xDFFF:
+                    raise TclSyntaxError(f"invalid Unicode surrogate U+{ord(variable_char):08X}")
+            # Tcl performs no backslash, command, or nested variable
+            # substitution while parsing a ${...} variable name.
+            decoded.append(text[index : closing + 1])
+            index = closing + 1
+            continue
         if text[index] != "\\":
             if 0xD800 <= ord(text[index]) <= 0xDFFF:
                 raise TclSyntaxError(f"invalid Unicode surrogate U+{ord(text[index]):08X}")
@@ -154,15 +189,22 @@ def _braced_word_end(word: str) -> int | None:
 
 def _quoted_word_end(word: str) -> int | None:
     escaped = False
-    for index in range(1, len(word)):
+    index = 1
+    while index < len(word):
         char = word[index]
         if escaped:
             escaped = False
-            continue
-        if char == "\\":
+        elif char == "\\":
             escaped = True
+        elif char == "$" and index + 1 < len(word) and word[index + 1] == "{":
+            closing = word.find("}", index + 2)
+            if closing < 0:
+                return None
+            index = closing + 1
+            continue
         elif char == '"':
             return index
+        index += 1
     return None
 
 
@@ -224,21 +266,31 @@ def tcl_word_has_substitution(word: str) -> bool:
                 if closing < 0:
                     raise TclSyntaxError("missing close-brace for Tcl variable name")
                 active = True
+                for variable_index in range(index + 2, closing):
+                    variable_char = text[variable_index]
+                    if 0xD800 <= ord(variable_char) <= 0xDFFF:
+                        raise TclSyntaxError(f"invalid Unicode surrogate U+{ord(variable_char):08X}")
+                index = closing + 1
+                continue
             elif index + 1 < len(text) and (text[index + 1].isalnum() or text[index + 1] in "_:"):
                 active = True
         index += 1
     return active
 
 
-def split_tcl_list_preserving_backslashes(value: str) -> tuple[str, ...]:
+def split_tcl_list_preserving_backslashes(value: str, *, max_elements: int = MAX_TCL_LIST_ELEMENTS) -> tuple[str, ...]:
     """Split the pattern list used by OpenSTA's ``get_*`` commands.
 
     OpenSTA doubles command-word backslashes before Tcl iterates the pattern
     list. This parser models that operation directly: backslashes cannot
     create list structure, remain single in bare/quoted elements, and remain
-    doubled inside a nested braced list element. No Tcl code is evaluated.
+    doubled inside a nested braced list element. The same element and braced
+    nesting limits as the general Tcl-list decoder apply. No Tcl code is
+    evaluated.
     """
 
+    if max_elements < 0:
+        raise ValueError("max_elements must be non-negative")
     elements: list[str] = []
     index = 0
     while index < len(value):
@@ -246,6 +298,8 @@ def split_tcl_list_preserving_backslashes(value: str) -> tuple[str, ...]:
             index += 1
         if index >= len(value):
             break
+        if len(elements) >= max_elements:
+            raise TclSyntaxError(f"Tcl list exceeds {max_elements} elements")
         if value[index] == "{":
             index += 1
             depth = 1
@@ -256,6 +310,8 @@ def split_tcl_list_preserving_backslashes(value: str) -> tuple[str, ...]:
                     element.append("\\\\")
                 elif char == "{":
                     depth += 1
+                    if depth > MAX_TCL_LIST_NESTING:
+                        raise TclSyntaxError(f"Tcl list exceeds nesting limit {MAX_TCL_LIST_NESTING}")
                     element.append(char)
                 elif char == "}":
                     depth -= 1
@@ -470,6 +526,16 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
             index += 1
             continue
 
+        context = contexts[-1]
+        if context.braced_variable:
+            buffer.append(char)
+            if char == "}":
+                context.braced_variable = False
+            if char == "\n":
+                line += 1
+            index += 1
+            continue
+
         if escaped:
             if char == "\n":
                 buffer.append(" ")
@@ -515,12 +581,20 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
             if char == '"':
                 context.quote = False
             elif char == "[":
-                contexts.append(_TclLexContext())
+                try:
+                    _push_command_substitution_context(contexts, includes_file_context=True)
+                except TclSyntaxError as error:
+                    return [], [(str(error), line)]
+            elif char == "$" and index + 1 < len(text) and text[index + 1] == "{":
+                context.braced_variable = True
         elif char == "[":
             buffer.append(char)
             context.at_word_start = False
             context.at_command_start = False
-            contexts.append(_TclLexContext())
+            try:
+                _push_command_substitution_context(contexts, includes_file_context=True)
+            except TclSyntaxError as error:
+                return [], [(str(error), line)]
         elif char == "]":
             if len(contexts) == 1:
                 record_issue("unexpected closing bracket", line)
@@ -549,6 +623,8 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
                 context.at_command_start = True
         else:
             buffer.append(char)
+            if char == "$" and index + 1 < len(text) and text[index + 1] == "{":
+                context.braced_variable = True
             if char in _TCL_WHITESPACE:
                 context.at_word_start = True
             else:
@@ -576,7 +652,9 @@ def _command_chunks(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, i
     return chunks, issues
 
 
-def split_words(command: str) -> tuple[str, ...]:
+def split_words(command: str, *, max_words: int = MAX_TCL_WORDS) -> tuple[str, ...]:
+    if max_words < 0:
+        raise ValueError("max_words must be non-negative")
     words: list[str] = []
     buffer: list[str] = []
     contexts = [_TclLexContext()]
@@ -585,11 +663,18 @@ def split_words(command: str) -> tuple[str, ...]:
     def flush() -> None:
         nonlocal buffer
         if buffer:
+            if len(words) >= max_words:
+                raise TclSyntaxError(f"Tcl command exceeds {max_words} words")
             words.append("".join(buffer))
             buffer = []
 
-    for char in command:
+    for index, char in enumerate(command):
         context = contexts[-1]
+        if context.braced_variable:
+            buffer.append(char)
+            if char == "}":
+                context.braced_variable = False
+            continue
         if escaped:
             buffer.extend(("\\", char))
             escaped = False
@@ -611,13 +696,15 @@ def split_words(command: str) -> tuple[str, ...]:
             if char == '"':
                 context.quote = False
             elif char == "[":
-                contexts.append(_TclLexContext())
+                _push_command_substitution_context(contexts, includes_file_context=True)
+            elif char == "$" and index + 1 < len(command) and command[index + 1] == "{":
+                context.braced_variable = True
             continue
         if char == "[":
             buffer.append(char)
             context.at_word_start = False
             context.at_command_start = False
-            contexts.append(_TclLexContext())
+            _push_command_substitution_context(contexts, includes_file_context=True)
             continue
         if char == "]" and len(contexts) > 1:
             buffer.append(char)
@@ -649,6 +736,8 @@ def split_words(command: str) -> tuple[str, ...]:
                 context.at_word_start = True
             continue
         buffer.append(char)
+        if char == "$" and index + 1 < len(command) and command[index + 1] == "{":
+            context.braced_variable = True
         context.at_word_start = False
         context.at_command_start = False
     if escaped:
@@ -658,10 +747,38 @@ def split_words(command: str) -> tuple[str, ...]:
 
 
 def parse_tcl(text: str, path: str) -> tuple[list[TclCommand], list[TclParseIssue]]:
+    location = SourceLocation(path, 1, 1)
+    if len(text) > MAX_SDC_INPUT_BYTES:
+        return [], [
+            TclParseIssue(
+                f"SDC source exceeds the {MAX_SDC_INPUT_BYTES}-byte UTF-8 input limit",
+                location,
+            )
+        ]
+    utf8_bytes = 0
+    try:
+        for start in range(0, len(text), _UTF8_SIZE_CHUNK_CHARACTERS):
+            chunk = text[start : start + _UTF8_SIZE_CHUNK_CHARACTERS]
+            utf8_bytes += len(chunk.encode("utf-8", errors="strict"))
+            if utf8_bytes > MAX_SDC_INPUT_BYTES:
+                return [], [
+                    TclParseIssue(
+                        f"SDC source exceeds the {MAX_SDC_INPUT_BYTES}-byte UTF-8 input limit",
+                        location,
+                    )
+                ]
+    except UnicodeEncodeError:
+        return [], [TclParseIssue("SDC source is not valid UTF-8", location)]
+
     chunks, raw_issues = _command_chunks(text)
     commands: list[TclCommand] = []
     for raw, line in chunks:
-        words = split_words(raw)
+        try:
+            words = split_words(raw)
+        except TclSyntaxError as error:
+            if len(raw_issues) < MAX_TCL_PARSE_ISSUES:
+                raw_issues.append((str(error), line))
+            continue
         if words:
             commands.append(TclCommand(raw=raw, words=words, location=SourceLocation(path, line, 1)))
     issues = [TclParseIssue(message, SourceLocation(path, line, 1)) for message, line in raw_issues]
@@ -692,6 +809,10 @@ def bracket_body(word: str) -> str | None:
                 context.at_word_start = True
                 context.at_command_start = True
             continue
+        if context.braced_variable:
+            if char == "}":
+                context.braced_variable = False
+            continue
         if escaped:
             escaped = False
             context.at_word_start = False
@@ -710,14 +831,22 @@ def bracket_body(word: str) -> str | None:
             if char == '"':
                 context.quote = False
             elif char == "[":
-                contexts.append(_TclLexContext())
+                try:
+                    _push_command_substitution_context(contexts, includes_file_context=False)
+                except TclSyntaxError:
+                    return None
+            elif char == "$" and index + 1 < len(candidate) and candidate[index + 1] == "{":
+                context.braced_variable = True
             continue
         if char == "#" and context.at_command_start:
             comment = True
         elif char == "[":
             context.at_word_start = False
             context.at_command_start = False
-            contexts.append(_TclLexContext())
+            try:
+                _push_command_substitution_context(contexts, includes_file_context=False)
+            except TclSyntaxError:
+                return None
         elif char == "]":
             if len(contexts) == 1:
                 return candidate[1:index] if index == len(candidate) - 1 else None
@@ -736,6 +865,8 @@ def bracket_body(word: str) -> str | None:
         elif char in _TCL_WHITESPACE:
             context.at_word_start = True
         else:
+            if char == "$" and index + 1 < len(candidate) and candidate[index + 1] == "{":
+                context.braced_variable = True
             context.at_word_start = False
             context.at_command_start = False
     return None

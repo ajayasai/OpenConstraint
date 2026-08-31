@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT = 120.0
+MAX_EFFECTIVE_SDC_BYTES = 16 * 1024 * 1024
 _BINARY_NAMES = ("sta", "opensta")
 _CHECK_SETUP_FAILURE = "OpenConstraint: check_setup reported one or more issues."
 
@@ -80,6 +81,7 @@ class OpenSTAModeResult:
     duration_seconds: float
     effective_sdc: str | None
     effective_sdc_sha256: str | None
+    failure_reason: str | None = None
 
     @property
     def return_code(self) -> int | None:
@@ -112,6 +114,7 @@ class OpenSTAModeResult:
             "duration_seconds": self.duration_seconds,
             "effective_sdc": self.effective_sdc,
             "effective_sdc_sha256": self.effective_sdc_sha256,
+            "failure_reason": self.failure_reason,
             "succeeded": self.succeeded,
         }
 
@@ -326,12 +329,40 @@ def _opensta_version(binary: str, timeout: float) -> str:
     return output.splitlines()[0].strip() if output else "unknown"
 
 
-def _effective_sdc(path: Path) -> tuple[str | None, str | None]:
+def _effective_sdc(path: Path) -> tuple[str | None, str | None, str | None]:
+    """Read one effective snapshot within a strict size and encoding boundary."""
+
     try:
-        payload = path.read_bytes()
+        snapshot_size = path.stat().st_size
     except FileNotFoundError:
-        return None, None
-    return payload.decode("utf-8", errors="replace"), sha256(payload).hexdigest()
+        return None, None, "OpenSTA did not emit an effective SDC snapshot."
+    if snapshot_size > MAX_EFFECTIVE_SDC_BYTES:
+        return (
+            None,
+            None,
+            f"OpenSTA effective SDC snapshot exceeds the 16 MiB ({MAX_EFFECTIVE_SDC_BYTES}-byte) safety limit.",
+        )
+
+    try:
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_EFFECTIVE_SDC_BYTES + 1)
+    except FileNotFoundError:
+        return None, None, "OpenSTA did not emit an effective SDC snapshot."
+    if len(payload) > MAX_EFFECTIVE_SDC_BYTES:
+        return (
+            None,
+            None,
+            f"OpenSTA effective SDC snapshot exceeds the 16 MiB ({MAX_EFFECTIVE_SDC_BYTES}-byte) safety limit.",
+        )
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        return (
+            None,
+            None,
+            f"OpenSTA effective SDC snapshot is not valid UTF-8 (invalid byte at offset {error.start}).",
+        )
+    return text, sha256(payload).hexdigest(), None
 
 
 def _validate_mode(config: OpenSTAConfig, mode: OpenSTAModeConfig, version: str) -> OpenSTAModeResult:
@@ -369,7 +400,7 @@ def _validate_mode(config: OpenSTAConfig, mode: OpenSTAModeConfig, version: str)
         except OSError as error:
             raise OpenSTAError(f"could not execute OpenSTA for mode {mode.name!r}: {error}") from error
         duration = time.monotonic() - started
-        effective_sdc, effective_hash = _effective_sdc(effective_path)
+        effective_sdc, effective_hash, failure_reason = _effective_sdc(effective_path)
         return OpenSTAModeResult(
             mode=mode.name,
             sdc_paths=mode.sdc_paths,
@@ -382,6 +413,7 @@ def _validate_mode(config: OpenSTAConfig, mode: OpenSTAModeConfig, version: str)
             duration_seconds=duration,
             effective_sdc=effective_sdc,
             effective_sdc_sha256=effective_hash,
+            failure_reason=failure_reason,
         )
 
 
@@ -420,6 +452,7 @@ def validate_with_opensta(
 
 __all__ = [
     "DEFAULT_TIMEOUT",
+    "MAX_EFFECTIVE_SDC_BYTES",
     "OpenSTAConfig",
     "OpenSTAError",
     "OpenSTAModeConfig",

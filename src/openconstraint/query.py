@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from openconstraint.model import Clock, Design
 from openconstraint.parsers.sdc import Selector
+from openconstraint.parsers.tcl import MAX_TCL_LIST_ELEMENTS
 
 
 @dataclass(slots=True)
@@ -42,13 +44,28 @@ _MAX_REGEXP_PATTERN_LENGTH = 4_096
 _MAX_REGEXP_GROUP_DEPTH = 64
 _MAX_REGEXP_QUANTIFIERS = 8
 _MAX_GLOB_WORK = 1_000_000
-_MAX_GLOB_COLLECTION_WORK = 10_000_000
-_MAX_REGEXP_COLLECTION_WORK = 10_000_000
+_MAX_SELECTOR_WORK = 10_000_000
 _BUS_RANGE_PATTERN = re.compile(r"\[\s*-?\d+\s*:\s*-?\d+\s*\]")
 
 
 class _GlobWorkLimitError(ValueError):
     """Raised before a glob comparison can exceed deterministic work."""
+
+
+@dataclass(slots=True)
+class _SelectorWorkBudget:
+    """One fail-closed work budget shared by a complete selector tree."""
+
+    limit: int = field(default_factory=lambda: _MAX_SELECTOR_WORK)
+    used: int = 0
+
+    def charge(self, units: int, activity: str) -> str | None:
+        if units < 0:
+            raise ValueError("selector work charge cannot be negative")
+        if units > self.limit - self.used:
+            return f"{activity} exceeds the aggregate deterministic selector work limit of {self.limit} work units"
+        self.used += units
+        return None
 
 
 def _collection_kind(selector: Selector) -> str:
@@ -71,22 +88,100 @@ def _universe(selector: Selector, design: Design, clocks: dict[str, Clock]) -> s
     return design.objects(selector.kind)
 
 
+def _universe_cache_key(selector: Selector) -> str:
+    if selector.kind in {"clocks", "all_clocks"}:
+        return "clocks"
+    return selector.kind
+
+
+def _universe_scan_size(selector: Selector, design: Design, clocks: dict[str, Clock]) -> int:
+    """Return an O(1) preflight bound for one base-collection scan."""
+
+    if selector.kind in {"all_inputs", "all_outputs", "ports"}:
+        return len(design.ports)
+    if selector.kind == "pins":
+        return len(design.pins)
+    if selector.kind in {"cells", "registers"}:
+        return len(design.instances)
+    if selector.kind == "nets":
+        return len(design.nets)
+    if selector.kind in {"clocks", "all_clocks"}:
+        return len(clocks)
+    return 0
+
+
+def _base_universe(
+    selector: Selector,
+    design: Design,
+    clocks: dict[str, Clock],
+    work_budget: _SelectorWorkBudget,
+    universe_cache: dict[str, set[str]],
+) -> tuple[set[str], str | None]:
+    key = _universe_cache_key(selector)
+    if key in universe_cache:
+        return universe_cache[key], None
+    work_error = work_budget.charge(
+        _universe_scan_size(selector, design, clocks),
+        "selector universe materialization",
+    )
+    if work_error is not None:
+        return set(), work_error
+    universe = _universe(selector, design, clocks)
+    universe_cache[key] = universe
+    return universe, None
+
+
 def _add_occurrences(multiplicities: dict[str, int], name: str | None, count: int) -> None:
     if name is not None and count > 0:
         multiplicities[name] = multiplicities.get(name, 0) + count
 
 
-def _connected_pins(net: str, design: Design) -> set[str]:
-    return design.drivers.get(net, set()) | design.loads.get(net, set())
+def _add_related_occurrences(
+    multiplicities: dict[str, int],
+    name: str | None,
+    count: int,
+    work_budget: _SelectorWorkBudget,
+) -> str | None:
+    """Account for one relationship edge before retaining its occurrence."""
+
+    work_error = work_budget.charge(1, "-of_objects relationship traversal")
+    if work_error is not None:
+        return work_error
+    if name is not None and count > 0:
+        _add_occurrences(multiplicities, name, count)
+    return None
+
+
+def _connected_pins(net: str, design: Design, work_budget: _SelectorWorkBudget) -> tuple[set[str], str | None]:
+    drivers = design.drivers.get(net, set())
+    loads = design.loads.get(net, set())
+    work_error = work_budget.charge(len(drivers) + len(loads), "-of_objects connectivity traversal")
+    if work_error is not None:
+        return set(), work_error
+    return drivers | loads, None
 
 
 def _related_universe(
-    selector: Selector, design: Design, clocks: dict[str, Clock]
+    selector: Selector,
+    design: Design,
+    clocks: dict[str, Clock],
+    work_budget: _SelectorWorkBudget,
+    cache: dict[int, ResolvedQuery] | None,
+    universe_cache: dict[str, set[str]],
 ) -> tuple[set[str], dict[str, int], str | None]:
     if selector.of_objects is None:
-        universe = _universe(selector, design, clocks)
-        return universe, dict.fromkeys(universe, 1), None
-    source = resolve_selector(selector.of_objects, design, clocks)
+        universe, work_error = _base_universe(selector, design, clocks, work_budget, universe_cache)
+        if work_error is not None:
+            return set(), {}, work_error
+        return universe, {}, None
+    source = _resolve_selector(
+        selector.of_objects,
+        design,
+        clocks,
+        work_budget,
+        cache,
+        universe_cache,
+    )
     if source.error:
         return set(), {}, f"unsupported -of_objects source: {source.error}"
     source_kind = _collection_kind(selector.of_objects)
@@ -102,28 +197,44 @@ def _related_universe(
         )
 
     source_multiplicities = source.multiplicities
+    work_error = work_budget.charge(len(source_multiplicities), "-of_objects source traversal")
+    if work_error is not None:
+        return set(), {}, work_error
     related: dict[str, int] = {}
     if selector.kind == "nets":
         for name, count in source_multiplicities.items():
             if source_kind == "pins" and name in design.pins:
-                _add_occurrences(related, design.pins[name].net, count)
+                work_error = _add_related_occurrences(related, design.pins[name].net, count, work_budget)
+                if work_error is not None:
+                    return set(), {}, work_error
             elif source_kind == "cells" and name in design.instances:
                 for instance_pin in design.instances[name].pins.values():
-                    _add_occurrences(related, instance_pin.net, count)
+                    work_error = _add_related_occurrences(related, instance_pin.net, count, work_budget)
+                    if work_error is not None:
+                        return set(), {}, work_error
         return set(related), related, None
     if selector.kind == "pins":
         for name, count in source_multiplicities.items():
             if source_kind == "cells" and name in design.instances:
                 for instance_pin in design.instances[name].pins.values():
-                    _add_occurrences(related, instance_pin.path, count)
+                    work_error = _add_related_occurrences(related, instance_pin.path, count, work_budget)
+                    if work_error is not None:
+                        return set(), {}, work_error
             elif source_kind == "nets" and name in design.nets:
-                for pin_path in _connected_pins(name, design):
-                    _add_occurrences(related, pin_path, count)
+                connected_pins, work_error = _connected_pins(name, design, work_budget)
+                if work_error is not None:
+                    return set(), {}, work_error
+                for pin_path in connected_pins:
+                    work_error = _add_related_occurrences(related, pin_path, count, work_budget)
+                    if work_error is not None:
+                        return set(), {}, work_error
         return set(related), related, None
     if selector.kind == "cells":
         for name, count in source_multiplicities.items():
             if source_kind == "pins" and name in design.pins:
-                _add_occurrences(related, design.pins[name].instance, count)
+                work_error = _add_related_occurrences(related, design.pins[name].instance, count, work_budget)
+                if work_error is not None:
+                    return set(), {}, work_error
                 continue
             net: str | None = None
             if source_kind == "nets" and name in design.nets:
@@ -131,17 +242,31 @@ def _related_universe(
             elif source_kind == "ports" and name in design.ports:
                 net = design.ports[name].net
             if net is not None:
-                for pin_path in _connected_pins(net, design):
+                connected_pins, work_error = _connected_pins(net, design, work_budget)
+                if work_error is not None:
+                    return set(), {}, work_error
+                for pin_path in connected_pins:
                     if pin_path in design.pins:
-                        _add_occurrences(related, design.pins[pin_path].instance, count)
+                        work_error = _add_related_occurrences(
+                            related, design.pins[pin_path].instance, count, work_budget
+                        )
+                        if work_error is not None:
+                            return set(), {}, work_error
         return set(related), related, None
     if selector.kind == "ports":
+        work_error = work_budget.charge(len(design.ports), "-of_objects port index construction")
+        if work_error is not None:
+            return set(), {}, work_error
+        ports_by_net: dict[str, list[str]] = {}
+        for port_name, port in design.ports.items():
+            ports_by_net.setdefault(port.net, []).append(port_name)
         for name, count in source_multiplicities.items():
             if source_kind != "nets" or name not in design.nets:
                 continue
-            for port_name, port in design.ports.items():
-                if port.net == name:
-                    _add_occurrences(related, port_name, count)
+            for port_name in ports_by_net.get(name, ()):
+                work_error = _add_related_occurrences(related, port_name, count, work_budget)
+                if work_error is not None:
+                    return set(), {}, work_error
         return set(related), related, None
     return set(), {}, f"-of_objects is not modeled for {selector.kind} queries"
 
@@ -203,8 +328,15 @@ def _pattern_has_wildcards(pattern: str, selector: Selector) -> bool:
     return any(character in metacharacters for character in pattern)
 
 
-def _pattern_universe(pattern: str, candidates: set[str], selector: Selector) -> set[str]:
-    """Return the flattened objects visible to one non-hierarchical walk.
+def _pattern_universe(
+    pattern: str,
+    candidates: set[str],
+    selector: Selector,
+    work_budget: _SelectorWorkBudget,
+    *,
+    filter_by_path_depth: bool,
+) -> tuple[set[str], str | None]:
+    """Return the flattened objects visible to one bounded non-hierarchical walk.
 
     OpenSTA's SDC network walks one instance-path component at a time.  A
     wildcard without a hierarchy separator therefore searches only the
@@ -216,19 +348,23 @@ def _pattern_universe(pattern: str, candidates: set[str], selector: Selector) ->
     behavior representable by that flattened model.
 
     Literal patterns retain the complete universe so exact deep paths still
-    resolve without requiring ``-hierarchical``.
+    resolve without requiring ``-hierarchical``. Depth filtering charges by
+    candidate-name length before scanning and fails without a partial set.
     """
 
-    if (
-        selector.hierarchical
-        or selector.kind not in _EXACT_LOOKUP_KINDS
-        or not _pattern_has_wildcards(pattern, selector)
-    ):
-        return candidates
+    if not filter_by_path_depth:
+        return candidates, None
     path_depth = pattern.count("/")
     if selector.kind == "pins" and not selector.regexp and pattern == "*":
         path_depth = 1
-    return {candidate for candidate in candidates if candidate.count("/") == path_depth}
+    visible: set[str] = set()
+    for candidate in candidates:
+        work_error = work_budget.charge(len(candidate) + 1, "selector hierarchy routing")
+        if work_error is not None:
+            return set(), work_error
+        if candidate.count("/") == path_depth:
+            visible.add(candidate)
+    return visible, None
 
 
 def _hierarchical_match_name(candidate: str, selector: Selector) -> str:
@@ -443,16 +579,23 @@ def _collection_work_error(
     candidates: set[str],
     selector: Selector,
     *,
-    limit: int,
+    work_budget: _SelectorWorkBudget,
     grammar: str,
 ) -> str | None:
     pattern_size = len(pattern.encode("utf-8")) + 1
-    work = 0
     for candidate in candidates:
+        work_error = work_budget.charge(len(candidate) + 1, f"{grammar} collection traversal")
+        if work_error is not None:
+            return work_error
         comparison_name = _hierarchical_match_name(candidate, selector)
-        work += pattern_size * (len(comparison_name.encode("utf-8")) + 1)
-        if work > limit:
-            return f"{grammar} collection comparison exceeds the deterministic work limit of {limit} states"
+        try:
+            comparison_size = len(comparison_name.encode("utf-8")) + 1
+        except UnicodeEncodeError:
+            return f"{grammar} collection contains an object name with an invalid Unicode surrogate"
+        work = pattern_size * comparison_size
+        work_error = work_budget.charge(work, f"{grammar} collection comparison")
+        if work_error is not None:
+            return work_error
     return None
 
 
@@ -517,7 +660,12 @@ def _match_nonhierarchical_paths(
     return matches, None
 
 
-def _match_pattern(pattern: str, candidates: set[str], selector: Selector) -> tuple[set[str], str | None]:
+def _match_pattern(
+    pattern: str,
+    candidates: set[str],
+    selector: Selector,
+    work_budget: _SelectorWorkBudget,
+) -> tuple[set[str], str | None]:
     # OpenSTA accepts -nocase without -regexp but warns that it is ignored.
     # Preserve the matching semantics even though this static resolver does
     # not duplicate the tool's console warning.
@@ -536,7 +684,7 @@ def _match_pattern(pattern: str, candidates: set[str], selector: Selector) -> tu
                 pattern,
                 candidates,
                 selector,
-                limit=_MAX_REGEXP_COLLECTION_WORK,
+                work_budget=work_budget,
                 grammar="regular-expression",
             )
             if work_error is not None:
@@ -560,6 +708,9 @@ def _match_pattern(pattern: str, candidates: set[str], selector: Selector) -> tu
     if unsupported is not None:
         return set(), unsupported
     if pattern == "*":
+        work_error = work_budget.charge(len(candidates), "glob collection fast path")
+        if work_error is not None:
+            return set(), work_error
         return set(candidates), None
     if not selector.hierarchical and not _pattern_has_wildcards(pattern, selector):
         return ({pattern} if pattern in candidates else set()), None
@@ -567,7 +718,7 @@ def _match_pattern(pattern: str, candidates: set[str], selector: Selector) -> tu
         pattern,
         candidates,
         selector,
-        limit=_MAX_GLOB_COLLECTION_WORK,
+        work_budget=work_budget,
         grammar="glob",
     )
     if work_error is not None:
@@ -634,19 +785,106 @@ def _apply_filter(values: set[str], selector: Selector, design: Design) -> tuple
 
 
 def resolve_selector(selector: Selector, design: Design, clocks: dict[str, Clock]) -> ResolvedQuery:
+    """Resolve one selector under a fresh budget shared by its nested sources."""
+
+    return _resolve_selector(selector, design, clocks, _SelectorWorkBudget(), {}, {})
+
+
+def resolve_selector_forest(
+    selectors: Iterable[Selector],
+    design: Design,
+    clocks: dict[str, Clock],
+) -> list[ResolvedQuery]:
+    """Resolve each unique selector in a forest under one aggregate budget.
+
+    Tcl evaluates nested command substitutions independently even when an
+    enclosing collection is unsupported.  Auditing every suffix with the
+    public single-selector API would recursively resolve descendants again
+    under fresh budgets, producing quadratic work.  This entry point walks
+    each selector object once and reuses descendant resolutions within one
+    deterministic budget.
+    """
+
+    work_budget = _SelectorWorkBudget()
+    cache: dict[int, ResolvedQuery] = {}
+    universe_cache: dict[str, set[str]] = {}
+    ordered: list[Selector] = []
+    seen: set[int] = set()
+    pending = list(reversed(tuple(selectors)))
+    traversal_error: str | None = None
+    while pending:
+        selector = pending.pop()
+        identity = id(selector)
+        if identity in seen:
+            continue
+        work_error = work_budget.charge(1, "selector tree traversal")
+        if work_error is not None:
+            traversal_error = work_error
+            ordered.append(selector)
+            break
+        seen.add(identity)
+        ordered.append(selector)
+        pending.extend(reversed(selector.nested_selectors))
+
+    results: list[ResolvedQuery] = []
+    for selector in ordered:
+        if traversal_error is not None and selector is ordered[-1]:
+            result = ResolvedQuery(selector, set(), 0, error=traversal_error)
+            cache[id(selector)] = result
+        else:
+            result = _resolve_selector(selector, design, clocks, work_budget, cache, universe_cache)
+        results.append(result)
+    return results
+
+
+def _resolve_selector(
+    selector: Selector,
+    design: Design,
+    clocks: dict[str, Clock],
+    work_budget: _SelectorWorkBudget,
+    cache: dict[int, ResolvedQuery] | None = None,
+    universe_cache: dict[str, set[str]] | None = None,
+) -> ResolvedQuery:
+    identity = id(selector)
+    if cache is not None and identity in cache:
+        return cache[identity]
+    if universe_cache is None:
+        universe_cache = {}
+    result = _resolve_selector_uncached(selector, design, clocks, work_budget, cache, universe_cache)
+    if cache is not None:
+        cache[identity] = result
+    return result
+
+
+def _resolve_selector_uncached(
+    selector: Selector,
+    design: Design,
+    clocks: dict[str, Clock],
+    work_budget: _SelectorWorkBudget,
+    cache: dict[int, ResolvedQuery] | None,
+    universe_cache: dict[str, set[str]],
+) -> ResolvedQuery:
     if selector.parse_error:
-        candidates = _universe(selector, design, clocks)
-        return ResolvedQuery(selector, set(), len(candidates), error=selector.parse_error)
-    candidates, candidate_multiplicities, universe_error = _related_universe(selector, design, clocks)
-    if universe_error:
-        return ResolvedQuery(selector, set(), len(candidates), error=universe_error)
+        return ResolvedQuery(selector, set(), 0, error=selector.parse_error)
+    if len(selector.patterns) > MAX_TCL_LIST_ELEMENTS:
+        return ResolvedQuery(
+            selector,
+            set(),
+            0,
+            error=f"selector pattern list exceeds {MAX_TCL_LIST_ELEMENTS} elements",
+        )
     if selector.dynamic:
         return ResolvedQuery(
             selector,
             set(),
-            len(candidates),
+            0,
             error="contains Tcl variable or nested dynamic expression",
         )
+    candidates, candidate_multiplicities, universe_error = _related_universe(
+        selector, design, clocks, work_budget, cache, universe_cache
+    )
+    if universe_error:
+        return ResolvedQuery(selector, set(), len(candidates), error=universe_error)
     matches: set[str]
     multiplicities: dict[str, int]
     unmatched_patterns: list[str] = []
@@ -654,25 +892,83 @@ def resolve_selector(selector: Selector, design: Design, clocks: dict[str, Clock
         # OpenSTA warns about positional patterns supplied with -of_objects,
         # then ignores them.  Applying those patterns here would make the
         # static and effective collections disagree.
+        work_error = work_budget.charge(2 * len(candidates), "selector result materialization")
+        if work_error is not None:
+            return ResolvedQuery(selector, set(), len(candidates), error=work_error)
         matches = set(candidates)
-        multiplicities = dict(candidate_multiplicities)
+        multiplicities = (
+            dict.fromkeys(candidates, 1)
+            if selector.kind in {"all_inputs", "all_outputs", "all_clocks"}
+            else dict(candidate_multiplicities)
+        )
     else:
         matches = set()
         multiplicities = {}
         searched_candidates: set[str] = set()
+        searched_all_candidates = False
         for pattern in selector.patterns:
-            pattern_candidates = _pattern_universe(pattern, candidates, selector)
-            searched_candidates.update(pattern_candidates)
-            selected, error = _match_pattern(pattern, pattern_candidates, selector)
+            try:
+                pattern_work = len(pattern.encode("utf-8")) + 1
+            except UnicodeEncodeError:
+                return ResolvedQuery(
+                    selector,
+                    set(),
+                    len(candidates),
+                    error="selector pattern contains an invalid Unicode surrogate",
+                )
+            work_error = work_budget.charge(pattern_work, "selector pattern processing")
+            if work_error is not None:
+                return ResolvedQuery(selector, set(), len(candidates), error=work_error)
+            filter_by_path_depth = (
+                not selector.hierarchical
+                and selector.kind in _EXACT_LOOKUP_KINDS
+                and _pattern_has_wildcards(pattern, selector)
+            )
+            pattern_candidates, work_error = _pattern_universe(
+                pattern,
+                candidates,
+                selector,
+                work_budget,
+                filter_by_path_depth=filter_by_path_depth,
+            )
+            if work_error is not None:
+                return ResolvedQuery(selector, set(), len(candidates), error=work_error)
+            if pattern_candidates is candidates:
+                searched_all_candidates = True
+            elif not searched_all_candidates:
+                work_error = work_budget.charge(len(pattern_candidates), "selector universe aggregation")
+                if work_error is not None:
+                    return ResolvedQuery(selector, set(), len(candidates), error=work_error)
+                searched_candidates.update(pattern_candidates)
+            selected, error = _match_pattern(pattern, pattern_candidates, selector, work_budget)
             if error:
                 return ResolvedQuery(selector, set(), len(candidates), error=error)
             if not selected:
                 unmatched_patterns.append(pattern)
+            work_error = work_budget.charge(2 * len(selected), "selector match aggregation")
+            if work_error is not None:
+                return ResolvedQuery(selector, set(), len(candidates), error=work_error)
             for match in selected:
                 multiplicities[match] = multiplicities.get(match, 0) + 1
             matches.update(selected)
-        candidates = searched_candidates
+        candidates = candidates if searched_all_candidates else searched_candidates
+    if selector.filter_expression is not None:
+        try:
+            filter_work = len(selector.filter_expression.encode("utf-8")) + 1
+        except UnicodeEncodeError:
+            return ResolvedQuery(
+                selector,
+                set(),
+                len(candidates),
+                error="selector filter contains an invalid Unicode surrogate",
+            )
+        work_error = work_budget.charge(filter_work + len(matches), "selector filter evaluation")
+        if work_error is not None:
+            return ResolvedQuery(selector, set(), len(candidates), error=work_error)
     matches, filter_error = _apply_filter(matches, selector, design)
+    work_error = work_budget.charge(2 * len(matches), "selector result finalization")
+    if work_error is not None:
+        return ResolvedQuery(selector, set(), len(candidates), error=work_error)
     match_count = sum(multiplicities.get(match, 0) for match in matches) if filter_error is None else 0
     return ResolvedQuery(
         selector,

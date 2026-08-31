@@ -369,6 +369,7 @@
         "timed_out",
         "duration_seconds",
         "effective_sdc_sha256",
+        "failure_reason",
         "stdout",
         "stderr",
         "effective_audit"
@@ -400,6 +401,9 @@
               "type": "null"
             }
           ]
+        },
+        "failure_reason": {
+          "type": ["string", "null"]
         },
         "stdout": {
           "type": "string"

@@ -474,6 +474,7 @@ def _merge_opensta(
             "timed_out": mode_result.timed_out,
             "duration_seconds": round(mode_result.duration_seconds, 6),
             "effective_sdc_sha256": mode_result.effective_sdc_sha256,
+            "failure_reason": mode_result.failure_reason,
             "stdout": mode_result.stdout,
             "stderr": mode_result.stderr,
             "effective_audit": None,
@@ -512,6 +513,10 @@ def _merge_opensta(
         )
         if mode_result.timed_out:
             message = f"OpenSTA validation for mode {mode_result.mode!r} timed out"
+        elif mode_result.returncode not in (None, 0):
+            message = f"OpenSTA validation for mode {mode_result.mode!r} exited with {mode_result.returncode}"
+        elif mode_result.failure_reason is not None:
+            message = f"OpenSTA validation for mode {mode_result.mode!r} failed: {mode_result.failure_reason}"
         else:
             message = (
                 f"OpenSTA validation for mode {mode_result.mode!r} exited with "
@@ -529,6 +534,7 @@ def _merge_opensta(
                 "opensta_version": validation.version,
                 "return_code": mode_result.returncode,
                 "timed_out": mode_result.timed_out,
+                "failure_reason": mode_result.failure_reason,
                 "stderr_tail": mode_result.stderr[-4000:],
                 "stdout_tail": mode_result.stdout[-4000:],
             },

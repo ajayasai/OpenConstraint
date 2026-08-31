@@ -15,7 +15,7 @@ This page records the evidence boundary as of 2026-09-01.
 | Parser resilience | Cross-platform properties, seed-corpus replay, and scheduled Atheris/libFuzzer mutation |
 | OpenSTA alignment | Source-pinned semantic tests and a workflow that builds and exercises the pinned engine revision |
 | CI adoption | Stable rule IDs, SARIF, JSON/HTML/text, exact diagnostic baselines, expiring waivers, and stale-control gates |
-| Auditability | Apache-2.0 source, documented coverage equation, closed-shape schemas, immutable corpus digests, and no default Tcl execution |
+| Auditability | Apache-2.0 source, documented coverage equation, strict schemas with documented extension points, immutable corpus digests, and no default Tcl execution |
 
 The checked-in accuracy score measures only its labeled cases. The public
 design run measures compatibility and scale on those designs. Neither is a

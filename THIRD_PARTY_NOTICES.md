@@ -1,12 +1,12 @@
 # Third-party notices
 
 OpenConstraint's own source code is licensed under Apache-2.0. Runtime and
-development dependencies retain their respective licenses; the installed
-environment and release provenance attestations are the authoritative
-inventory for a particular build. The build backend and direct distribution
-tools are exactly versioned in `pyproject.toml`; other development tooling is
-constrained by compatible ranges rather than represented as a full transitive
-lock.
+development dependencies retain their respective licenses. Release provenance
+attestations bind published artifacts to their source and build workflow; they
+are not a software bill of materials or a transitive dependency/license
+inventory. The build backend and direct distribution tools are exactly
+versioned in `pyproject.toml`; other development tooling is constrained by
+compatible ranges rather than represented as a full transitive lock.
 
 ## OpenSTA
 

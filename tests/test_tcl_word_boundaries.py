@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from openconstraint.parsers.sdc import _parse_selector_body, parse_sdc_text
+import openconstraint.parsers.sdc as sdc_parser
+from openconstraint.parsers.sdc import parse_sdc_text
 from openconstraint.parsers.tcl import parse_tcl
 
 
@@ -106,13 +107,62 @@ def test_unterminated_tcl_variable_name_fails_closed(audit_factory, sdc: str) ->
     assert not result.modes[0].clocks
 
 
-def test_repeated_selector_bodies_reuse_the_bounded_parse_cache() -> None:
+def test_selector_body_memo_is_command_local_without_process_global_retention(monkeypatch) -> None:
     body = "get_ports cache_probe_74839"
-    before = _parse_selector_body.cache_info()
+    parsed_bodies: list[str] = []
+    original = sdc_parser._parse_selector_body
+
+    def counted_parse(selector_body: str):
+        parsed_bodies.append(selector_body)
+        return original(selector_body)
+
+    monkeypatch.setattr(sdc_parser, "_parse_selector_body", counted_parse)
+    parse_sdc_text(f"set_false_path -to [{body}]\n")
+    assert parsed_bodies == [body]
 
     parse_sdc_text(f"set_false_path -to [{body}]\n")
-    parse_sdc_text(f"set_false_path -to [{body}]\n")
+    assert parsed_bodies == [body, body]
 
-    after = _parse_selector_body.cache_info()
-    assert after.maxsize == 4_096
-    assert after.hits >= before.hits + 1
+
+def test_nested_selector_suffix_work_fails_closed_before_recursive_amplification(monkeypatch) -> None:
+    payload = "x" * 2_048
+    query = f"[get_cells {{{payload}}}]"
+    for command_name in ("get_nets", "get_pins", "get_cells", "get_nets", "get_ports"):
+        query = f"[{command_name} -of_objects {query}]"
+    # The root is accepted, but reparsing its nearly identical child suffix
+    # would exceed this document-wide budget.
+    monkeypatch.setattr(sdc_parser, "MAX_SELECTOR_PARSE_WORK", len(query) + 8)
+    parsed_body_lengths: list[int] = []
+    original = sdc_parser._parse_selector_body
+
+    def counted_parse(selector_body: str):
+        parsed_body_lengths.append(len(selector_body))
+        return original(selector_body)
+
+    monkeypatch.setattr(sdc_parser, "_parse_selector_body", counted_parse)
+
+    selector = parse_sdc_text(f"set_false_path -to {query}\n").commands[0].selectors[0]
+    nested = selector.of_objects
+
+    assert nested is not None
+    assert nested.parse_error is not None
+    assert "selector parsing exceeds the aggregate static work limit" in nested.parse_error
+    assert len(nested.raw) <= sdc_parser._MAX_SELECTOR_ERROR_RAW_CHARACTERS
+    assert selector.of_objects_raw == nested.raw
+    assert parsed_body_lengths == [len(query) - 2]
+
+
+def test_root_selector_parse_limit_uses_its_bounded_semantic_join_key(monkeypatch, audit_factory) -> None:
+    query = f"[get_ports {{{'x' * 2_048}}}]"
+    monkeypatch.setattr(sdc_parser, "MAX_SELECTOR_PARSE_WORK", 64)
+
+    command = parse_sdc_text(f"set_false_path -to {query}\n").commands[0]
+    selector = command.selectors[0]
+    result = audit_factory(f"set_false_path -to {query}")
+
+    assert selector.command_name == "<selector>"
+    assert len(selector.raw) <= sdc_parser._MAX_SELECTOR_ERROR_RAW_CHARACTERS
+    assert command.option("-to") == selector.raw
+    assert any(finding.rule_id == "OC1004" for finding in result.diagnostics)
+    assert result.modes[0].exceptions[0].to_objects == set()
+    assert result.modes[0].exceptions[0].qualifiers["scope_resolvable"] is False
