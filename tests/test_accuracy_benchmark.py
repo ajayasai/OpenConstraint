@@ -55,14 +55,14 @@ def test_committed_truth_set_has_perfect_reviewed_rule_classification() -> None:
 
     assert summary == {
         "passed": True,
-        "case_count": 30,
-        "defect_case_count": 29,
+        "case_count": 31,
+        "defect_case_count": 30,
         "clean_case_count": 1,
-        "exact_match_case_count": 30,
+        "exact_match_case_count": 31,
         "cases_with_misses": 0,
         "false_pass_cases": 0,
         "false_pass_rate": 0.0,
-        "true_positives": 57,
+        "true_positives": 58,
         "false_positives": 0,
         "false_negatives": 0,
         "precision": 1.0,
@@ -185,7 +185,7 @@ def test_aggregate_metrics_preserve_case_identity(tmp_path: Path) -> None:
     result = run_accuracy_suite(load_truth_set(path))
     summary = result["summary"]
     assert summary["passed"] is False
-    assert summary["true_positives"] == 55
+    assert summary["true_positives"] == 56
     assert summary["false_positives"] == 2
     assert summary["false_negatives"] == 2
 

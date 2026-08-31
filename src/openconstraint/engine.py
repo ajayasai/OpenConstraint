@@ -29,6 +29,8 @@ from openconstraint.query import ResolvedQuery, has_glob, resolve_selector
 from openconstraint.version import __version__
 
 STRUCTURAL_WARNING_SAMPLE_LIMIT = 50
+_IODelayAuditRelationshipKey = tuple[str, str, tuple[str, ...], str]
+_IODelayAuditSlotKey = tuple[str, str]
 
 
 @dataclass(slots=True)
@@ -1179,52 +1181,103 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
 
 
 def _audit_io_delays(state: _ModeState) -> None:
-    coverage: dict[tuple[str, str, tuple[str, ...], str], dict[str, set[str]]] = {}
-    previous: list[IODelay] = []
+    active: dict[_IODelayAuditRelationshipKey, dict[_IODelayAuditSlotKey, tuple[float, IODelay]]] = {}
+
+    def source_order(source: IODelay) -> tuple[str, int, int, str]:
+        return (source.location.path, source.location.line, source.location.column, source.raw)
+
     for item in state.io_delays:
-        if not item.valid:
+        if not item.valid or item.value is None:
             continue
+        clocks = tuple(sorted(item.clocks))
+        clock_edge = item.clock_edge if clocks else "rise"
+        selected_slots = {(transition, min_max) for transition in item.transitions for min_max in item.min_max}
         for port in sorted(item.ports):
-            completeness_key = (
-                item.kind,
-                port,
-                tuple(sorted(item.clocks)),
-                item.clock_edge,
-            )
-            transition_coverage = coverage.setdefault(completeness_key, {})
-            for transition in item.transitions:
-                transition_coverage.setdefault(transition, set()).update(item.min_max)
-            first = next(
-                (
-                    candidate
-                    for candidate in previous
-                    if candidate.kind == item.kind
-                    and port in candidate.ports
-                    and candidate.clocks == item.clocks
-                    and candidate.clock_edge == item.clock_edge
-                    and bool(candidate.min_max & item.min_max)
-                    and bool(candidate.transitions & item.transitions)
-                ),
-                None,
-            )
-            if first is not None and not item.additive:
+            key: _IODelayAuditRelationshipKey = (item.kind, port, clocks, clock_edge)
+            relationship = active.setdefault(key, {})
+            overwritten: dict[
+                _IODelayAuditRelationshipKey,
+                dict[_IODelayAuditSlotKey, tuple[float, IODelay]],
+            ] = {}
+            if not item.additive:
+                for candidate_key in list(active):
+                    if candidate_key[:2] != key[:2]:
+                        continue
+                    candidate = active[candidate_key]
+                    removed_slots = set(candidate) if candidate_key != key else selected_slots & set(candidate)
+                    if removed_slots:
+                        overwritten[candidate_key] = {slot: candidate[slot] for slot in removed_slots}
+                    if candidate_key != key:
+                        del active[candidate_key]
+
+            if overwritten:
+                overwritten_relationships: list[dict[str, object]] = []
+                sources: list[IODelay] = []
+                overwritten_slots: set[_IODelayAuditSlotKey] = set()
+                for prior_key, prior_slots in sorted(overwritten.items()):
+                    prior_sources = sorted(
+                        {source_order(source): source for _value, source in prior_slots.values()}.values(),
+                        key=source_order,
+                    )
+                    sources.extend(prior_sources)
+                    overwritten_slots.update(prior_slots)
+                    overwritten_relationships.append(
+                        {
+                            "clock": list(prior_key[2]),
+                            "clock_edge": prior_key[3],
+                            "min_max": sorted({slot[1] for slot in prior_slots}),
+                            "transitions": sorted({slot[0] for slot in prior_slots}),
+                            "locations": [source.location.to_dict() for source in prior_sources],
+                            "reason": "slot_replaced" if prior_key == key else "relationship_removed",
+                            "slots": [
+                                {
+                                    "transition": slot[0],
+                                    "min_max": slot[1],
+                                    "value": prior_slots[slot][0],
+                                    "location": prior_slots[slot][1].location.to_dict(),
+                                }
+                                for slot in sorted(prior_slots)
+                            ],
+                        }
+                    )
+                first = min(sources, key=source_order)
                 _finding(
                     state,
                     "OC3014",
                     Severity.WARNING,
                     f"{item.kind} delay for port {port!r} overwrites an earlier constraint",
                     item.location,
-                    "Repeated I/O delays on the same clock/edge/min-max slot replace earlier intent unless -add_delay is used.",
+                    "A non-additive I/O delay replaces selected slots in its relationship and removes competing "
+                    "clock/edge relationships for the same port.",
                     "Remove the duplicate, narrow its scope, or use -add_delay when multiple relationships are intentional.",
                     {
                         "port": port,
-                        "clock": sorted(item.clocks),
-                        "min_max": sorted(first.min_max & item.min_max),
-                        "transitions": sorted(first.transitions & item.transitions),
+                        "clock": list(clocks),
+                        "clock_edge": clock_edge,
+                        "min_max": sorted({slot[1] for slot in overwritten_slots}),
+                        "transitions": sorted({slot[0] for slot in overwritten_slots}),
                         "previous_location": first.location.to_dict(),
+                        "overwritten_relationships": overwritten_relationships,
                     },
                 )
-        previous.append(item)
+
+            relationship = active[key]
+            for slot in sorted(selected_slots):
+                current = relationship.get(slot)
+                min_max = slot[1]
+                if (
+                    not item.additive
+                    or current is None
+                    or (min_max == "min" and item.value < current[0])
+                    or (min_max == "max" and item.value > current[0])
+                ):
+                    relationship[slot] = (item.value, item)
+
+    coverage: dict[_IODelayAuditRelationshipKey, dict[str, set[str]]] = {}
+    for key, slots in active.items():
+        transition_coverage = coverage.setdefault(key, {})
+        for transition, min_max in slots:
+            transition_coverage.setdefault(transition, set()).add(min_max)
     for key, by_transition in sorted(coverage.items()):
         missing_by_transition = {
             transition: sorted({"min", "max"} - covered)
@@ -1236,14 +1289,7 @@ def _audit_io_delays(state: _ModeState) -> None:
         kind, port, clocks, clock_edge = key
         present = set.intersection(*(set(values) for values in by_transition.values()))
         missing = set().union(*(set(values) for values in missing_by_transition.values()))
-        item = next(
-            candidate
-            for candidate in state.io_delays
-            if candidate.kind == kind
-            and port in candidate.ports
-            and tuple(sorted(candidate.clocks)) == clocks
-            and candidate.clock_edge == clock_edge
-        )
+        item = min((source for _value, source in active[key].values()), key=source_order)
         _finding(
             state,
             "OC3013",

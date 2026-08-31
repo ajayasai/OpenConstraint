@@ -545,6 +545,23 @@
       ]
     },
     {
+      "id": "io-delay-competing-clock-overwritten",
+      "description": "Switch one input port to a competing virtual-clock relationship without -add_delay.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "append",
+          "text": "create_clock -name aux_clk -period 12 -waveform {0 6}\nset_input_delay 3 -clock aux_clk [get_ports data_a]\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3014",
+          "count": 1
+        }
+      ]
+    },
+    {
       "id": "invalid-multicycle",
       "description": "Append a setup multicycle with a zero multiplier.",
       "execution": "mutant-only",

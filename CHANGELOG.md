@@ -47,6 +47,9 @@ _No changes yet._
   reference-pin, and edge relationship after deterministic OpenSTA-compatible
   replacement and `-add_delay` replay. Invalid attempted relationships add
   uncovered obligations instead of disappearing from the denominator.
+- I/O overwrite diagnostics now follow that same active-state replay: a
+  non-additive clock or clock-edge switch reports the relationships it removes,
+  while superseded relationships no longer create stale completeness warnings.
 - Benchmark manifests and baselines reject duplicate JSON keys, excessive
   size, excessive nesting, and excessive node counts before semantic traversal.
 - Release builds pin the backend, bind wheel timestamps to the release commit,
@@ -54,8 +57,8 @@ _No changes yet._
 
 ### Validation
 
-- The reviewed accuracy corpus contains 57 expected diagnostic occurrences
-  across 30 cases and currently gates at 57 true positives, zero false
+- The reviewed accuracy corpus contains 58 expected diagnostic occurrences
+  across 31 cases and currently gates at 58 true positives, zero false
   positives, and zero false negatives for its explicitly scored rule set.
 - The checksum-pinned OpenROAD AES, Ibex, and JPEG suite covers 78,537
   gate-level instances and 6,842 sequential endpoints; all refreshed semantic

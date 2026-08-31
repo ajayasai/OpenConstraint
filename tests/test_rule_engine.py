@@ -708,6 +708,106 @@ set_input_delay -add_delay 2 [get_ports data]
     assert not _find(additive, "OC3014")
 
 
+def test_oc3014_detects_clock_and_edge_relationship_replacement(audit_factory) -> None:
+    switched_clock = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+create_clock -name aux -period 12 -waveform {0 6}
+set_input_delay -min 1 -clock core [get_ports data]
+set_input_delay 2 -clock aux [get_ports data]
+"""
+    )
+    switched_edge = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [get_ports data]
+set_input_delay -clock_fall 2 -clock core [get_ports data]
+"""
+    )
+
+    clock_findings = _find(switched_clock, "OC3014")
+    assert len(clock_findings) == 1
+    clock_finding = clock_findings[0]
+    assert clock_finding.evidence["clock"] == ["aux"]
+    assert clock_finding.evidence["clock_edge"] == "rise"
+    assert clock_finding.evidence["overwritten_relationships"] == [
+        {
+            "clock": ["core"],
+            "clock_edge": "rise",
+            "min_max": ["min"],
+            "transitions": ["fall", "rise"],
+            "locations": [{"path": clock_finding.location.path, "line": 3, "column": 1}],
+            "reason": "relationship_removed",
+            "slots": [
+                {
+                    "transition": "fall",
+                    "min_max": "min",
+                    "value": 1.0,
+                    "location": {"path": clock_finding.location.path, "line": 3, "column": 1},
+                },
+                {
+                    "transition": "rise",
+                    "min_max": "min",
+                    "value": 1.0,
+                    "location": {"path": clock_finding.location.path, "line": 3, "column": 1},
+                },
+            ],
+        }
+    ]
+    assert not _find(switched_clock, "OC3013")
+
+    edge_findings = _find(switched_edge, "OC3014")
+    assert len(edge_findings) == 1
+    edge_finding = edge_findings[0]
+    assert edge_finding.evidence["clock"] == ["core"]
+    assert edge_finding.evidence["clock_edge"] == "fall"
+    assert edge_finding.evidence["overwritten_relationships"][0]["clock_edge"] == "rise"
+    assert edge_finding.evidence["overwritten_relationships"][0]["reason"] == "relationship_removed"
+    assert not _find(switched_edge, "OC3013")
+
+
+def test_oc3014_add_delay_retains_competing_incomplete_relationship(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+create_clock -name aux -period 12 -waveform {0 6}
+set_input_delay -max 1 -clock core [get_ports data]
+set_input_delay -add_delay 2 -clock aux [get_ports data]
+"""
+    )
+
+    assert not _find(result, "OC3014")
+    incomplete = _find(result, "OC3013")
+    assert len(incomplete) == 1
+    assert incomplete[0].evidence == {
+        "port": "data",
+        "clock": ["core"],
+        "present": ["max"],
+        "missing": ["min"],
+        "missing_by_transition": {"fall": ["min"], "rise": ["min"]},
+    }
+
+
+def test_oc3014_reports_the_active_relationship_not_stale_history(audit_factory) -> None:
+    result = audit_factory(
+        """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+create_clock -name aux -period 12 -waveform {0 6}
+set_input_delay 1 -clock core [get_ports data]
+set_input_delay 2 -clock aux [get_ports data]
+set_input_delay 3 -clock core [get_ports data]
+"""
+    )
+
+    findings = _find(result, "OC3014")
+    assert len(findings) == 2
+    second = findings[1]
+    assert second.evidence["clock"] == ["core"]
+    assert second.evidence["previous_location"]["line"] == 4
+    assert second.evidence["overwritten_relationships"][0]["clock"] == ["aux"]
+    assert second.evidence["overwritten_relationships"][0]["locations"][0]["line"] == 4
+
+
 def test_oc4001_false_path_shadowing_multicycle_is_error_with_intersections(audit_factory) -> None:
     result = audit_factory(
         """
