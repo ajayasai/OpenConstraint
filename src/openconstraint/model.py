@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -168,6 +169,22 @@ class Clock:
     combinational: bool = False
     edges: tuple[int, ...] | None = None
     edge_shift: tuple[float, ...] | None = None
+
+    @property
+    def effective_waveform(self) -> tuple[float, ...] | None:
+        """Return the explicit or valid implicit waveform used for timing."""
+
+        if self.waveform is not None:
+            return self.waveform
+        if (
+            not self.generated
+            and not self.waveform_explicit
+            and self.period is not None
+            and math.isfinite(self.period)
+            and self.period > 0
+        ):
+            return (0.0, self.period / 2.0)
+        return None
 
 
 @dataclass(slots=True)

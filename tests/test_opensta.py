@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 import openconstraint.opensta as opensta
-from openconstraint.cli import _merge_opensta
+from openconstraint.cli import _merge_opensta, _mode_semantics
 from openconstraint.engine import AuditOptions, ModeInput, audit
+from openconstraint.model import Clock, SourceLocation
 from openconstraint.opensta import (
     OpenSTAConfig,
     OpenSTAModeConfig,
@@ -106,12 +107,19 @@ def test_real_opensta_fixture_is_statically_complete() -> None:
     sdc = OPENSTA_FIXTURE_ROOT / "roundtrip.sdc"
     design = elaborate(parse_verilog([verilog]), parse_liberty(liberty), "opensta_roundtrip")
 
-    result = audit(design, [ModeInput("default", [str(sdc)])], AuditOptions())
+    result = audit(
+        design,
+        [ModeInput("default", [str(sdc)])],
+        AuditOptions(report_implicit_waveform=False),
+    )
 
     assert result.diagnostics == []
     assert len(result.modes) == 1
     coverage = result.modes[0].coverage
     assert (coverage.score, coverage.grade) == (100.0, "A")
+    assert result.modes[0].clocks["core_clk"].waveform is None
+    assert result.modes[0].clocks["core_clk"].effective_waveform == (0.0, 5.0)
+    assert result.modes[0].clocks["phase_clk"].waveform == (1.0, 3.0)
     components = {component.key: component for component in coverage.components}
     assert {
         key: (component.covered, component.total, component.percentage, component.weight)
@@ -122,6 +130,96 @@ def test_real_opensta_fixture_is_statically_complete() -> None:
         "output_delays": (4, 4, 100.0, 0.2),
         "query_health": (5, 5, 100.0, 0.1),
     }
+
+
+def test_semantic_snapshot_normalizes_implicit_primary_clock_waveform(audit_factory, design_factory) -> None:
+    implicit_sdc = """
+create_clock -name core -period 10 [get_ports clk]
+set_input_delay 1 -clock core [get_ports {clk2 data spare}]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    explicit_sdc = """
+create_clock -name core -period 10 -waveform {0 5} [get_ports clk]
+set_input_delay 1 -clock core [get_ports {clk2 data spare}]
+set_output_delay 2 -clock core [all_outputs]
+"""
+    result = audit_factory(implicit_sdc)
+    implicit = result.modes[0]
+    explicit = audit_factory(explicit_sdc).modes[0]
+
+    assert implicit.clocks["core"].waveform is None
+    assert implicit.clocks["core"].effective_waveform == (0.0, 5.0)
+    assert explicit.clocks["core"].waveform == explicit.clocks["core"].effective_waveform == (0.0, 5.0)
+    assert _mode_semantics(implicit) == _mode_semantics(explicit)
+    reported_clock = result.to_dict()["modes"][0]["clocks"][0]
+    assert reported_clock["waveform"] is None
+    assert reported_clock["waveform_explicit"] is False
+
+    mode = OpenSTAModeResult(
+        mode="default",
+        sdc_paths=("constraints.sdc",),
+        version="OpenSTA 3.1.0",
+        command=("sta", "validate.tcl"),
+        stdout="",
+        stderr="",
+        returncode=0,
+        timed_out=False,
+        duration_seconds=0.1,
+        effective_sdc=explicit_sdc,
+        effective_sdc_sha256=sha256(explicit_sdc.encode()).hexdigest(),
+    )
+    validation = OpenSTAValidationResult(
+        config=OpenSTAConfig("sta", 10, ("top.v",), ("cells.lib",), "top"),
+        version="OpenSTA 3.1.0",
+        modes=(mode,),
+    )
+
+    _merge_opensta(result, validation, design_factory(), AuditOptions())
+
+    effective_audit = result.summary["opensta"]["modes"][0]["effective_audit"]
+    assert effective_audit["semantic_match"] is True
+    assert effective_audit["static_semantic_sha256"] == effective_audit["effective_semantic_sha256"]
+
+
+@pytest.mark.parametrize("period", [0.0, float("nan"), float("inf")])
+def test_effective_waveform_rejects_invalid_implicit_primary_period(period: float) -> None:
+    clock = Clock("core", {"clk"}, period, None, False, SourceLocation("constraints.sdc"))
+
+    assert clock.effective_waveform is None
+
+
+def test_effective_waveform_never_relabels_invalid_explicit_primary() -> None:
+    clock = Clock("core", {"clk"}, 10.0, None, True, SourceLocation("constraints.sdc"))
+
+    assert clock.effective_waveform is None
+
+
+def test_effective_waveform_preserves_derived_generated_clock() -> None:
+    clock = Clock(
+        "div2",
+        {"u_ff/CLK"},
+        20.0,
+        (0.0, 10.0),
+        False,
+        SourceLocation("constraints.sdc"),
+        generated=True,
+    )
+
+    assert clock.effective_waveform == (0.0, 10.0)
+
+
+def test_effective_waveform_never_synthesizes_invalid_generated_clock() -> None:
+    clock = Clock(
+        "broken",
+        {"u_ff/CLK"},
+        20.0,
+        None,
+        False,
+        SourceLocation("constraints.sdc"),
+        generated=True,
+    )
+
+    assert clock.effective_waveform is None
 
 
 def test_successful_multi_mode_validation_is_isolated_and_captured(

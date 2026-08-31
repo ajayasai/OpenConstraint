@@ -51,6 +51,9 @@ total and newly merged diagnostic counts, normalized static/effective semantic
 SHA-256 values, and `semantic_match`. That comparison covers modeled clocks,
 exceptions, canonical active I/O-delay state, and coverage. Raw I/O-delay
 command history remains in the normal report and is not hashed as active state.
+For semantic comparison, a valid primary clock without `-waveform` uses its SDC
+default `{0, period/2}`; the normal report still records `waveform: null` and
+`waveform_explicit: false`, preserving the authored constraint provenance.
 The original static mode remains the primary model; its clocks, exceptions, and
 coverage are not replaced, and cross-mode rules are not rerun over effective
 snapshots.

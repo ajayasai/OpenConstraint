@@ -54,6 +54,9 @@ _No changes yet._
   size, excessive nesting, and excessive node counts before semantic traversal.
 - Release builds pin the backend, bind wheel timestamps to the release commit,
   and refuse to replace assets on an existing GitHub release tag.
+- OpenSTA semantic comparison now normalizes a valid implicit primary-clock
+  waveform to its effective 50% duty cycle while preserving the raw waveform
+  and explicitness fields in reports.
 
 ### Validation
 

@@ -118,6 +118,7 @@ jobs:
             --top opensta_roundtrip \
             --opensta \
             --opensta-bin "$PWD/opensta/build/sta" \
+            --no-implicit-waveform-note \
             --fail-on never \
             --format json \
             --output opensta-integration-report.json
@@ -177,23 +178,33 @@ jobs:
           assert static_mode["name"] == "default", static_mode
           assert static_mode["diagnostics"] == [], static_mode
           assert len(static_mode["io_delays"]) == 2, static_mode["io_delays"]
-          assert len(static_mode["clocks"]) == 1, static_mode["clocks"]
-          clock = static_mode["clocks"][0]
+          assert len(static_mode["clocks"]) == 2, static_mode["clocks"]
+          clocks = {clock["name"]: clock for clock in static_mode["clocks"]}
           assert {
-              "name": clock["name"],
-              "targets": clock["targets"],
-              "period": clock["period"],
-              "waveform": clock["waveform"],
-              "waveform_explicit": clock["waveform_explicit"],
-              "generated": clock["generated"],
+              name: {
+                  "targets": clock["targets"],
+                  "period": clock["period"],
+                  "waveform": clock["waveform"],
+                  "waveform_explicit": clock["waveform_explicit"],
+                  "generated": clock["generated"],
+              }
+              for name, clock in clocks.items()
           } == {
-              "name": "core_clk",
-              "targets": ["clk"],
-              "period": 10.0,
-              "waveform": [0.0, 4.0],
-              "waveform_explicit": True,
-              "generated": False,
-          }, clock
+              "core_clk": {
+                  "targets": ["clk"],
+                  "period": 10.0,
+                  "waveform": None,
+                  "waveform_explicit": False,
+                  "generated": False,
+              },
+              "phase_clk": {
+                  "targets": [],
+                  "period": 8.0,
+                  "waveform": [1.0, 3.0],
+                  "waveform_explicit": True,
+                  "generated": False,
+              },
+          }, clocks
           verify_complete_coverage(static_mode["coverage"])
 
           evidence = report["summary"]["opensta"]

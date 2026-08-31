@@ -324,7 +324,7 @@ def _mode_semantics(mode: ModeResult) -> dict[str, object]:
                 "name": clock.name,
                 "targets": sorted(clock.targets),
                 "period": clock.period,
-                "waveform": list(clock.waveform) if clock.waveform is not None else None,
+                "waveform": list(clock.effective_waveform) if clock.effective_waveform is not None else None,
                 "generated": clock.generated,
                 "source_targets": sorted(clock.source_targets),
                 "master_clock": clock.master_clock,

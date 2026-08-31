@@ -327,16 +327,6 @@ def _generated_clock_parameters(
     return divide, multiply, duty_cycle, edges, edge_shift, True
 
 
-def _effective_clock_waveform(clock: Clock) -> tuple[float, ...] | None:
-    """Return the waveform OpenSTA uses as a generated-clock master."""
-
-    if clock.waveform is not None:
-        return clock.waveform
-    if not clock.generated and not clock.waveform_explicit and clock.period is not None and clock.period > 0:
-        return (0.0, clock.period / 2.0)
-    return None
-
-
 def _is_power_of_two(value: int) -> bool:
     return value > 0 and value & (value - 1) == 0
 
@@ -365,7 +355,7 @@ def _derive_generated_clock_timing(
     """
 
     source_period = source_clock.period
-    source_waveform = _effective_clock_waveform(source_clock)
+    source_waveform = source_clock.effective_waveform
     if source_period is None or source_period <= 0 or source_waveform is None or len(source_waveform) < 2:
         return None
 
