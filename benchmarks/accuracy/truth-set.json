@@ -469,6 +469,39 @@
       ]
     },
     {
+      "id": "io-delay-extra-positional-targets",
+      "description": "Give both input and output delays an extra target collection that OpenSTA rejects.",
+      "execution": "mutant-only",
+      "mutations": [
+        {
+          "kind": "replace",
+          "match": "set_input_delay 2 -clock core_clk [get_ports {scan_clk reset_n data_a data_b}]\n",
+          "replacement": "set_input_delay 2 -clock core_clk [get_ports {scan_clk reset_n data_a data_b}] [get_ports data_a]\n",
+          "count": 1
+        },
+        {
+          "kind": "replace",
+          "match": "set_output_delay 2 -clock core_clk [get_ports {result_a result_b}]\n",
+          "replacement": "set_output_delay 2 -clock core_clk [get_ports {result_a result_b}] [get_ports result_a]\n",
+          "count": 1
+        }
+      ],
+      "expected": [
+        {
+          "rule_id": "OC3001",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3002",
+          "count": 1
+        },
+        {
+          "rule_id": "OC3010",
+          "count": 2
+        }
+      ]
+    },
+    {
       "id": "io-delay-clock-reference",
       "description": "Point one input-delay command at an undefined clock.",
       "execution": "mutant-only",

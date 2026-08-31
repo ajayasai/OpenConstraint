@@ -117,7 +117,16 @@ selectors. Fetch and run write JSON to stdout by default; `--output FILE`
 redirects it. Run exits 1 for a case error or semantic-baseline mismatch and 2
 for invalid metadata, cache integrity failures, or unreadable inputs. A
 resolved output path may not overlap the manifest, a loaded baseline, or a
-declared local suite input.
+declared local suite input, and may not be the declared cache directory or any
+path beneath it. Before manifest loading, validation covers the declared and
+resolved cache plus its fixed `artifacts` and `sources` layers. Once the
+manifest is loaded, it also covers only the selected artifacts' exact blob,
+digest, and materialization paths; it does not walk the cache tree. A rare
+same-entry versus hard-link disambiguation probes at most 4,096 sibling names.
+After selection is validated, the command creates the cache root and repeats
+the identity check before acquisition or analysis. That also exposes fresh
+case- and Unicode-normalization aliases for suite-only selections. The check
+runs once more immediately before publishing the output.
 
 The default cache is `.cache/openconstraint/benchmarks` below the user's home
 directory. For strict reproduction, fetch into an explicit cache and rerun with

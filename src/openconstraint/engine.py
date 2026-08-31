@@ -1019,20 +1019,42 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
         ports.update(_collection_literals(word, set(design.ports)))
     ports.intersection_update(design.ports)
 
-    malformed = len(command.positionals) < 2
+    shape_valid = len(command.positionals) == 2
     dynamic_delay = bool(delay_word and ("$" in delay_word or delay_word.lstrip().startswith("[")))
-    if malformed or delay is None:
-        severity = Severity.WARNING if dynamic_delay and not malformed else Severity.ERROR
-        reason = "dynamic delay expression" if dynamic_delay else "missing or non-finite numeric delay"
+    if not shape_valid or delay is None:
+        severity = Severity.WARNING if dynamic_delay and shape_valid else Severity.ERROR
+        if not shape_valid:
+            reason = "invalid positional-operand count"
+            remediation = "Provide exactly one finite delay and one port collection."
+        elif dynamic_delay:
+            reason = "dynamic delay expression"
+            remediation = (
+                "Use a finite numeric delay in the static file, or validate the dynamic expression with OpenSTA."
+            )
+        else:
+            reason = "missing or non-finite numeric delay"
+            remediation = "Use a finite numeric delay in the static file."
+        evidence: dict[str, object] = {
+            "command": command.name,
+            "delay": delay_word,
+            "positionals": command.positionals,
+        }
+        if not shape_valid:
+            evidence.update(
+                {
+                    "expected_positional_count": 2,
+                    "actual_positional_count": len(command.positionals),
+                }
+            )
         _finding(
             state,
             "OC3010",
             severity,
             f"{command.name} has a {reason}",
             command.location,
-            "An unresolved or invalid delay value cannot establish a reviewable interface timing requirement.",
-            "Use a finite numeric delay in the static file, or validate the dynamic expression with the trusted STA backend.",
-            {"command": command.name, "delay": delay_word, "positionals": command.positionals},
+            "An invalid I/O-delay command cannot establish a reviewable interface timing requirement.",
+            remediation,
+            evidence,
         )
 
     clocks, clock_valid = _clock_references(command, design, state.clocks)
@@ -1158,12 +1180,12 @@ def _collect_io_delay(state: _ModeState, command: ParsedCommand, design: Design,
         transitions=transitions,
         clock_edge="fall" if command.has("-clock_fall") else "rise",
         additive=command.has("-add_delay"),
-        valid=delay is not None and clock_valid and reference_valid and bool(valid_ports),
+        valid=shape_valid and delay is not None and clock_valid and reference_valid and bool(valid_ports),
         location=command.location,
         raw=command.raw,
     )
     state.io_delays.append(item)
-    if delay is not None and clock_valid and reference_valid:
+    if shape_valid and delay is not None and clock_valid and reference_valid:
         if kind == "input":
             state.delayed_inputs.update(valid_ports)
         else:

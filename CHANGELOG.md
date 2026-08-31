@@ -50,6 +50,9 @@ _No changes yet._
 - I/O overwrite diagnostics now follow that same active-state replay: a
   non-additive clock or clock-edge switch reports the relationships it removes,
   while superseded relationships no longer create stale completeness warnings.
+- I/O-delay commands now require exactly one delay and one target collection,
+  matching OpenSTA's positional arity and preventing rejected extra targets
+  from satisfying missing-delay or coverage obligations.
 - Benchmark manifests and baselines reject duplicate JSON keys, excessive
   size, excessive nesting, and excessive node counts before semantic traversal.
 - Release builds pin the backend, bind wheel timestamps to the release commit,
@@ -57,11 +60,20 @@ _No changes yet._
 - OpenSTA semantic comparison now normalizes a valid implicit primary-clock
   waveform to its effective 50% duty cycle while preserving the raw waveform
   and explicitness fields in reports.
+- Benchmark commands now validate fetch, result, and baseline outputs against
+  the declared/resolved cache and fixed cache layers before manifest loading,
+  then against exact selected blob, digest, and materialization paths before
+  work. After selection, the cache root is materialized and identity is checked
+  again before work, including for suite-only cases; a final check runs
+  immediately before publication. Validation does not walk the cache tree and
+  bounds same-entry disambiguation. CLI single-file output uses atomic
+  replacement so an external hard-link alias cannot truncate a cached blob or
+  materialization.
 
 ### Validation
 
-- The reviewed accuracy corpus contains 58 expected diagnostic occurrences
-  across 31 cases and currently gates at 58 true positives, zero false
+- The reviewed accuracy corpus contains 62 expected diagnostic occurrences
+  across 32 cases and currently gates at 62 true positives, zero false
   positives, and zero false negatives for its explicitly scored rule set.
 - The checksum-pinned OpenROAD AES, Ibex, and JPEG suite covers 78,537
   gate-level instances and 6,842 sequential endpoints; all refreshed semantic

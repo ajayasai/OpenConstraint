@@ -91,6 +91,16 @@ class Artifact:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactCachePaths:
+    """Content-addressed cache locations derived from one artifact record."""
+
+    blob: Path
+    digest_root: Path
+    materialization_root: Path
+    logical_root: Path
+
+
+@dataclass(frozen=True, slots=True)
 class InputReference:
     origin: str
     path: str
@@ -729,6 +739,38 @@ def _extract_raw(blob: Path, destination: Path, artifact: Artifact) -> None:
     shutil.copyfile(blob, target)
 
 
+def _artifact_cache_marker(artifact: Artifact) -> JsonObject:
+    """Return the extraction settings bound into a materialization key."""
+
+    return {
+        "archive": artifact.archive,
+        "filename": artifact.filename,
+        "sha256": artifact.sha256,
+        "size_bytes": artifact.size_bytes,
+        "strip_prefix": artifact.strip_prefix,
+        "unpacked_size_limit_bytes": artifact.unpacked_size_limit_bytes,
+    }
+
+
+def artifact_cache_paths(artifact: Artifact, cache_dir: str | Path) -> ArtifactCachePaths:
+    """Derive the exact cache paths used to acquire and materialize an artifact."""
+
+    cache = Path(cache_dir).resolve()
+    marker = _artifact_cache_marker(artifact)
+    materialization = hashlib.sha256(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    digest_root = cache / "sources" / artifact.sha256
+    materialization_root = digest_root / materialization
+    logical_root = materialization_root / artifact.strip_prefix if artifact.strip_prefix else materialization_root
+    return ArtifactCachePaths(
+        blob=cache / "artifacts" / f"{artifact.sha256}.blob",
+        digest_root=digest_root,
+        materialization_root=materialization_root,
+        logical_root=logical_root,
+    )
+
+
 def acquire_artifact(
     artifact: Artifact,
     cache_dir: str | Path,
@@ -738,12 +780,12 @@ def acquire_artifact(
 ) -> Path:
     """Verify/download and safely extract an artifact, returning its logical root."""
 
-    cache = Path(cache_dir).resolve()
-    artifact_dir = cache / "artifacts"
-    source_parent = cache / "sources"
+    paths = artifact_cache_paths(artifact, cache_dir)
+    artifact_dir = paths.blob.parent
+    source_parent = paths.digest_root.parent
     artifact_dir.mkdir(parents=True, exist_ok=True)
     source_parent.mkdir(parents=True, exist_ok=True)
-    blob = artifact_dir / f"{artifact.sha256}.blob"
+    blob = paths.blob
     if blob.exists():
         problem = _validate_blob(blob, artifact)
         if problem:
@@ -767,18 +809,8 @@ def acquire_artifact(
         finally:
             temporary.unlink(missing_ok=True)
 
-    expected_marker = {
-        "archive": artifact.archive,
-        "filename": artifact.filename,
-        "sha256": artifact.sha256,
-        "size_bytes": artifact.size_bytes,
-        "strip_prefix": artifact.strip_prefix,
-        "unpacked_size_limit_bytes": artifact.unpacked_size_limit_bytes,
-    }
-    materialization = hashlib.sha256(
-        json.dumps(expected_marker, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()[:16]
-    extracted = source_parent / artifact.sha256 / materialization
+    expected_marker = _artifact_cache_marker(artifact)
+    extracted = paths.materialization_root
     extracted.parent.mkdir(parents=True, exist_ok=True)
     marker = extracted / ".openconstraint-artifact.json"
     if marker.is_file() and not marker.is_symlink() and not _is_junction(marker):
@@ -866,6 +898,24 @@ def _required_artifact_ids(case: BenchmarkCase) -> set[str]:
     return {reference.origin for reference in references if reference.origin != "suite"}
 
 
+def selected_required_artifacts(
+    manifest: BenchmarkManifest,
+    dataset_ids: Iterable[str] | None = None,
+    case_ids: Iterable[str] | None = None,
+) -> tuple[tuple[Dataset, Artifact], ...]:
+    """Return selected artifacts once, in deterministic manifest order."""
+
+    required_by_dataset: dict[str, set[str]] = {}
+    for dataset, case in _select(manifest, dataset_ids, case_ids):
+        required_by_dataset.setdefault(dataset.dataset_id, set()).update(_required_artifact_ids(case))
+    return tuple(
+        (dataset, artifact)
+        for dataset in manifest.datasets
+        for artifact in dataset.artifacts
+        if artifact.artifact_id in required_by_dataset.get(dataset.dataset_id, set())
+    )
+
+
 def fetch_suite(
     manifest: BenchmarkManifest,
     cache_dir: str | Path,
@@ -877,32 +927,23 @@ def fetch_suite(
 ) -> JsonObject:
     """Acquire all unique artifacts required by the selected cases."""
 
-    selected = _select(manifest, dataset_ids, case_ids)
-    required_by_dataset: dict[str, set[str]] = {}
-    for dataset, case in selected:
-        required_by_dataset.setdefault(dataset.dataset_id, set()).update(_required_artifact_ids(case))
     records: list[JsonObject] = []
-    for dataset in manifest.datasets:
-        if dataset.dataset_id not in required_by_dataset:
-            continue
-        for artifact in dataset.artifacts:
-            if artifact.artifact_id not in required_by_dataset[dataset.dataset_id]:
-                continue
-            acquire_artifact(artifact, cache_dir, offline=offline, downloader=downloader)
-            records.append(
-                {
-                    "dataset": dataset.dataset_id,
-                    "artifact": artifact.artifact_id,
-                    "sha256": artifact.sha256,
-                    "size_bytes": artifact.size_bytes,
-                    "license": {
-                        "spdx": artifact.license.spdx,
-                        "url": artifact.license.url,
-                        "notice": artifact.license.notice,
-                        "repository_license_url": artifact.license.repository_license_url,
-                    },
-                }
-            )
+    for dataset, artifact in selected_required_artifacts(manifest, dataset_ids, case_ids):
+        acquire_artifact(artifact, cache_dir, offline=offline, downloader=downloader)
+        records.append(
+            {
+                "dataset": dataset.dataset_id,
+                "artifact": artifact.artifact_id,
+                "sha256": artifact.sha256,
+                "size_bytes": artifact.size_bytes,
+                "license": {
+                    "spdx": artifact.license.spdx,
+                    "url": artifact.license.url,
+                    "notice": artifact.license.notice,
+                    "repository_license_url": artifact.license.repository_license_url,
+                },
+            }
+        )
     return {
         "kind": "benchmark-fetch",
         "schema_version": RESULT_SCHEMA_VERSION,

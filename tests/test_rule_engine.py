@@ -555,6 +555,66 @@ set_input_delay {delay} -clock core [get_ports data]
     assert _find(result, "OC3001")
 
 
+@pytest.mark.parametrize(
+    ("command", "kind", "missing_rule", "missing_ports", "coverage_key", "coverage_total"),
+    [
+        (
+            "set_input_delay 1 -clock core [get_ports data] [get_ports spare]",
+            "input",
+            "OC3001",
+            {"data", "spare"},
+            "input_delays",
+            12,
+        ),
+        (
+            "set_output_delay 2 -clock core [get_ports result] [all_outputs]",
+            "output",
+            "OC3002",
+            {"result"},
+            "output_delays",
+            4,
+        ),
+    ],
+)
+def test_oc3010_rejects_extra_io_delay_target_argument_without_coverage(
+    audit_factory,
+    command: str,
+    kind: str,
+    missing_rule: str,
+    missing_ports: set[str],
+    coverage_key: str,
+    coverage_total: int,
+) -> None:
+    result = audit_factory(
+        f"""
+create_clock -name core -period 10 [get_ports clk]
+{command}
+"""
+    )
+
+    finding = _find(result, "OC3010")[0]
+    io_delay = result.modes[0].io_delays[0]
+    component = next(item for item in result.modes[0].coverage.components if item.key == coverage_key)
+
+    assert finding.severity == Severity.ERROR
+    assert "positional-operand count" in finding.message
+    assert len(finding.evidence["positionals"]) == 3
+    assert finding.evidence["expected_positional_count"] == 2
+    assert finding.evidence["actual_positional_count"] == 3
+    assert io_delay.kind == kind
+    assert io_delay.valid is False
+    assert missing_ports <= set(_find(result, missing_rule)[0].evidence["ports"])
+    assert (component.covered, component.total) == (0, coverage_total)
+
+
+def test_io_delay_accepts_one_collection_containing_multiple_ports(audit_factory) -> None:
+    result = audit_factory("set_input_delay 1 [get_ports {data spare}]")
+
+    assert not _find(result, "OC3010")
+    assert result.modes[0].io_delays[0].ports == frozenset({"data", "spare"})
+    assert result.modes[0].io_delays[0].valid is True
+
+
 def test_negative_io_delay_is_a_valid_finite_value(audit_factory) -> None:
     result = audit_factory("set_input_delay -min -1.25 [get_ports data]")
 

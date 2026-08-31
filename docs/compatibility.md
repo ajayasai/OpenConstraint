@@ -35,8 +35,8 @@ issue when either limit is crossed.
 | --- | --- |
 | `create_clock` | [Identity/target/additive shape](rules/OC2006.md), positive period, explicit waveform sanity, and redefinition |
 | `create_generated_clock` | Target, source, master, divide/multiply/duty, three-edge/edge-shift, invert, combinational, and additive-transform validation |
-| `set_input_delay` | Finite value, singular clock/reference-pin resolution, input/inout direction, min/max and rise/fall slots, clock edge, and OpenSTA-compatible replacement/merge replay |
-| `set_output_delay` | Finite value, singular clock/reference-pin resolution, output/inout direction, min/max and rise/fall slots, clock edge, and OpenSTA-compatible replacement/merge replay |
+| `set_input_delay` | Exact delay/target arity, finite value, singular clock/reference-pin resolution, input/inout direction, min/max and rise/fall slots, clock edge, and OpenSTA-compatible replacement/merge replay |
+| `set_output_delay` | Exact delay/target arity, finite value, singular clock/reference-pin resolution, output/inout direction, min/max and rise/fall slots, clock edge, and OpenSTA-compatible replacement/merge replay |
 | `set_false_path` | [Definition-shape validation](rules/OC4002.md), edge-qualified from/to plus ordered through scope, and setup/hold applicability |
 | `set_multicycle_path` | Edge-qualified ordered scope, integer multiplier, setup/hold, start/end, reset marker, pairing, and conflict analysis |
 | `set_max_delay`, `set_min_delay` | Definition/value validation, edge-qualified ordered scope, and normalized numeric value for overlap/mode comparison |

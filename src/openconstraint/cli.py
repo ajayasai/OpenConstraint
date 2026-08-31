@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
+import os
+import secrets
 import shutil
+import stat
 import sys
 from collections.abc import Sequence
 from hashlib import sha256
@@ -21,13 +25,16 @@ from openconstraint.adoption import (
 )
 from openconstraint.adoption import baseline_from_result as diagnostic_baseline_from_result
 from openconstraint.benchmark import (
+    Artifact,
     BenchmarkManifest,
+    artifact_cache_paths,
     baseline_from_result,
     fetch_suite,
     load_baseline,
     load_manifest,
     render_benchmark_json,
     run_suite,
+    selected_required_artifacts,
 )
 from openconstraint.engine import AuditOptions, ModeInput, audit, audit_sdc_text
 from openconstraint.model import (
@@ -57,6 +64,8 @@ SCHEMA_FILES = {
     "waivers": "openconstraint-waivers.schema.json",
     "baseline": "openconstraint-diagnostic-baseline.schema.json",
 }
+_WINDOWS_CANT_RESOLVE_FILENAME = 1921
+_BENCHMARK_INPUT_ENTRY_PROBE_LIMIT = 4096
 
 
 def _percentage(value: str) -> float:
@@ -220,13 +229,101 @@ def _load_design(verilog_paths: list[str], liberty_paths: list[str], top: str | 
     return elaborate(parse_verilog([Path(path) for path in verilog_paths]), library, top)
 
 
+def _is_symlink_loop_error(error: OSError) -> bool:
+    return error.errno == errno.ELOOP or getattr(error, "winerror", None) == _WINDOWS_CANT_RESOLVE_FILENAME
+
+
 def _write(value: str, output: str) -> None:
     if output == "-":
         sys.stdout.write(value)
         return
-    target = Path(output)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(value, encoding="utf-8", newline="\n")
+    requested = Path(output)
+    try:
+        requested.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        if _is_symlink_loop_error(error):
+            raise ValueError(f"could not resolve output path {requested}: {error}") from error
+        raise
+    # Preserve the historical final-symlink behavior while staging beside the
+    # referent so replacement is atomic and does not truncate shared hard links.
+    try:
+        target = requested.resolve(strict=False)
+    except RuntimeError as error:
+        raise ValueError(f"could not resolve output path {requested}: {error}") from error
+    except OSError as error:
+        if _is_symlink_loop_error(error):
+            raise ValueError(f"could not resolve output path {requested}: {error}") from error
+        raise
+
+    existing_mode: int | None = None
+    try:
+        existing = target.stat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        if _is_symlink_loop_error(error):
+            raise ValueError(f"could not resolve output path {requested}: {error}") from error
+        raise
+    else:
+        if not stat.S_ISREG(existing.st_mode):
+            raise OSError(f"output path is not a regular file: {target}")
+        # Preserve direct-write access policy even though publication replaces
+        # the directory entry instead of truncating a potentially shared inode.
+        descriptor = os.open(
+            target,
+            os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError(f"output path changed or is not a regular file: {target}")
+            existing_mode = stat.S_IMODE(opened.st_mode) & 0o777
+        except BaseException as error:
+            try:
+                os.close(descriptor)
+            except BaseException as close_error:
+                error.add_note(f"output permission-probe close also failed: {close_error}")
+            raise
+        else:
+            os.close(descriptor)
+
+    temporary: Path | None = None
+    stream = None
+    for _attempt in range(128):
+        candidate = target.parent / f".openconstraint-{secrets.token_hex(8)}.tmp"
+        try:
+            stream = candidate.open("x", encoding="utf-8", newline="\n")
+        except FileExistsError:
+            continue
+        temporary = candidate
+        break
+    if temporary is None or stream is None:
+        raise FileExistsError(f"could not reserve a temporary output in {target.parent}")
+
+    try:
+        try:
+            stream.write(value)
+            stream.flush()
+            if existing_mode is not None:
+                if hasattr(os, "fchmod"):
+                    os.fchmod(stream.fileno(), existing_mode)
+                else:
+                    temporary.chmod(existing_mode)
+        except BaseException as error:
+            try:
+                stream.close()
+            except BaseException as close_error:
+                error.add_note(f"output stream close also failed: {close_error}")
+            raise
+        else:
+            stream.close()
+        os.replace(temporary, target)
+    except BaseException as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as cleanup_error:
+            error.add_note(f"output staging cleanup also failed: {cleanup_error}")
+        raise
 
 
 def _write_all(result: AuditResult, output: str) -> None:
@@ -532,30 +629,224 @@ def _demo_command(output_dir: str) -> int:
     return _quality_exit(result, "error", 100.0)
 
 
+def _normalize_windows_namespace(path: Path) -> Path:
+    """Normalize common Win32 extended aliases before path comparison."""
+
+    if os.name != "nt":
+        return path
+    raw = str(path)
+    folded = raw.casefold()
+    if folded.startswith(("\\\\?\\unc\\", "\\\\.\\unc\\")):
+        return Path("\\\\" + raw[8:])
+    if (
+        folded.startswith(("\\\\?\\", "\\\\.\\"))
+        and len(raw) >= 7
+        and raw[4].isalpha()
+        and raw[5] == ":"
+        and raw[6] in {"\\", "/"}
+    ):
+        return Path(raw[4:])
+    return path
+
+
+def _absolute_benchmark_path(path: Path) -> Path:
+    """Return a normalized absolute spelling without following the leaf."""
+
+    return _normalize_windows_namespace(Path(os.path.abspath(path)))
+
+
+def _resolved_benchmark_path(path: Path, label: str) -> Path:
+    """Resolve links while presenting link loops as ordinary input errors."""
+
+    try:
+        resolved = path.resolve(strict=False)
+    except RuntimeError as error:
+        raise ValueError(f"could not resolve {label} path {path}: {error}") from error
+    except OSError as error:
+        if _is_symlink_loop_error(error):
+            raise ValueError(f"could not resolve {label} path {path}: {error}") from error
+        raise
+    # Python 3.13+ can return a partially resolved path for a non-strict
+    # symlink loop. Probe the request so all supported versions classify it.
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except OSError as error:
+        if _is_symlink_loop_error(error):
+            raise ValueError(f"could not resolve {label} path {path}: {error}") from error
+        raise
+    return _normalize_windows_namespace(resolved)
+
+
+def _path_is_within(candidate: Path, root: Path) -> bool:
+    return candidate == root or candidate.is_relative_to(root)
+
+
+def _existing_ancestor_matches(candidate: Path, root: Path) -> bool:
+    """Use filesystem identity to catch mapped-drive, bind-mount, and namespace aliases."""
+
+    candidate_chain = (candidate, *candidate.parents)
+    root_chain = (root, *root.parents)
+    for candidate_ancestor in candidate_chain:
+        for root_ancestor in root_chain:
+            try:
+                identical = os.path.samefile(candidate_ancestor, root_ancestor)
+            except OSError:
+                continue
+            if not identical:
+                continue
+            candidate_tail = candidate.relative_to(candidate_ancestor).parts
+            root_tail = root.relative_to(root_ancestor).parts
+            # A distinct regular-file hard link is safe for the atomic writer:
+            # replacement detaches the output name instead of truncating the
+            # cache inode. Namespace aliases still match through their parent
+            # directories and equal relative tails.
+            if not candidate_tail and not root_tail:
+                try:
+                    if candidate_ancestor.is_file() and root_ancestor.is_file():
+                        if _same_benchmark_input_entry(candidate_ancestor, root_ancestor):
+                            return True
+                        continue
+                except OSError:
+                    pass
+            if os.name == "nt":
+                candidate_tail = tuple(os.path.normcase(part) for part in candidate_tail)
+                root_tail = tuple(os.path.normcase(part) for part in root_tail)
+            if candidate_tail[: len(root_tail)] == root_tail:
+                return True
+    return False
+
+
+def _path_overlaps_cache(candidate: Path, root: Path) -> bool:
+    return _path_is_within(candidate, root) or _existing_ancestor_matches(candidate, root)
+
+
+def _same_benchmark_input_entry(candidate: Path, source: Path) -> bool:
+    """Identify one directory entry without reserving safe external hard links."""
+
+    if candidate == source:
+        return True
+    try:
+        if not os.path.samefile(candidate, source):
+            return False
+        if not os.path.samefile(candidate.parent, source.parent):
+            return False
+    except OSError:
+        return False
+    if candidate.name == source.name:
+        return True
+    try:
+        if source.stat().st_nlink <= 1:
+            return True
+        # Multiple links in one directory are safe only when both exact entry
+        # names exist. Stream a bounded probe and fail closed for inaccessible
+        # or unusually large directories; never enumerate cache contents.
+        found_candidate = False
+        found_source = False
+        with os.scandir(source.parent) as entries:
+            for index, entry in enumerate(entries, start=1):
+                if index > _BENCHMARK_INPUT_ENTRY_PROBE_LIMIT:
+                    return True
+                found_candidate |= entry.name == candidate.name
+                found_source |= entry.name == source.name
+                if found_candidate and found_source:
+                    return False
+    except OSError:
+        return True
+    return True
+
+
+def _benchmark_cache_roots(
+    cache_path: Path,
+    artifacts: Sequence[Artifact] = (),
+) -> tuple[Path, ...]:
+    """Return fixed cache layers and exact selected-artifact namespaces."""
+
+    roots: list[Path] = []
+
+    def add(path: Path) -> None:
+        resolved = _resolved_benchmark_path(path, "benchmark cache")
+        if resolved not in roots:
+            roots.append(resolved)
+
+    add(cache_path)
+    add(cache_path / "artifacts")
+    add(cache_path / "sources")
+    for artifact in artifacts:
+        paths = artifact_cache_paths(artifact, cache_path)
+        add(paths.blob)
+        add(paths.digest_root)
+        add(paths.materialization_root)
+    return tuple(roots)
+
+
 def _validate_benchmark_output_path(
     arguments: argparse.Namespace,
     manifest: BenchmarkManifest | None = None,
 ) -> None:
-    """Reject benchmark output that would overwrite a declared input."""
+    """Reject benchmark output that would overwrite an input or cache state."""
 
+    selected_artifacts = (
+        tuple(
+            artifact
+            for _, artifact in selected_required_artifacts(
+                manifest,
+                arguments.dataset,
+                arguments.case,
+            )
+        )
+        if manifest is not None
+        else ()
+    )
     if arguments.output == "-":
         return
-    output = Path(arguments.output).resolve()
-    inputs = [("--manifest", Path(arguments.manifest).resolve())]
+    output_path = Path(arguments.output)
+    cache_path = Path(arguments.cache_dir)
+    output = _resolved_benchmark_path(output_path, "benchmark output")
+    cache = _resolved_benchmark_path(cache_path, "--cache-dir")
+    declared_output = _absolute_benchmark_path(output_path)
+    declared_cache = _absolute_benchmark_path(cache_path)
+    rename_destination = _absolute_benchmark_path(
+        _resolved_benchmark_path(output_path.parent, "benchmark output parent") / output_path.name
+    )
+    cache_roots = _benchmark_cache_roots(cache_path, selected_artifacts)
+    if (
+        _path_is_within(declared_output, declared_cache)
+        or any(_path_overlaps_cache(rename_destination, root) for root in cache_roots)
+        or any(_path_overlaps_cache(output, root) for root in cache_roots)
+    ):
+        raise ValueError(f"benchmark output path {output} must not overlap --cache-dir path {cache}")
+    inputs = [("--manifest", _resolved_benchmark_path(Path(arguments.manifest), "--manifest"))]
     if getattr(arguments, "baseline", None):
-        inputs.append(("--baseline", Path(arguments.baseline).resolve()))
+        inputs.append(("--baseline", _resolved_benchmark_path(Path(arguments.baseline), "--baseline")))
     if manifest is not None:
         inputs.extend(
-            ("suite file", (manifest.path.parent / item.path).resolve()) for item in manifest.suite_files.values()
+            (
+                "suite file",
+                _resolved_benchmark_path(manifest.path.parent / item.path, "suite file"),
+            )
+            for item in manifest.suite_files.values()
         )
     for label, source in inputs:
-        if output == source:
+        if _same_benchmark_input_entry(output, source):
             raise ValueError(f"benchmark output path {output} must not overlap {label} input path {source}")
 
 
 def _benchmark_command(arguments: argparse.Namespace) -> int:
     _validate_benchmark_output_path(arguments)
     manifest = load_manifest(arguments.manifest)
+    _validate_benchmark_output_path(arguments, manifest)
+    baseline = (
+        load_baseline(arguments.baseline, manifest)
+        if arguments.benchmark_command == "run" and arguments.baseline
+        else None
+    )
+    # Give case- and normalization-insensitive filesystems a concrete cache
+    # entry to compare before any artifact acquisition or analysis. This also
+    # protects suite-only selections, which would not otherwise create cache
+    # state before report publication.
+    _resolved_benchmark_path(Path(arguments.cache_dir), "--cache-dir").mkdir(parents=True, exist_ok=True)
     _validate_benchmark_output_path(arguments, manifest)
     common = {
         "dataset_ids": arguments.dataset,
@@ -564,17 +855,22 @@ def _benchmark_command(arguments: argparse.Namespace) -> int:
     }
     if arguments.benchmark_command == "fetch":
         result = fetch_suite(manifest, arguments.cache_dir, **common)
-        _write(render_benchmark_json(result), arguments.output)
+        rendered = render_benchmark_json(result)
+        _validate_benchmark_output_path(arguments, manifest)
+        _write(rendered, arguments.output)
         return 0
     if arguments.benchmark_command == "run":
-        baseline = load_baseline(arguments.baseline, manifest) if arguments.baseline else None
         result = run_suite(manifest, arguments.cache_dir, baseline=baseline, **common)
-        _write(render_benchmark_json(result), arguments.output)
+        rendered = render_benchmark_json(result)
+        _validate_benchmark_output_path(arguments, manifest)
+        _write(rendered, arguments.output)
         summary = result["summary"]
         return 1 if summary["regressions"] or summary["errors"] else 0
     result = run_suite(manifest, arguments.cache_dir, **common)
     baseline = baseline_from_result(result)
-    _write(render_benchmark_json(baseline), arguments.output)
+    rendered = render_benchmark_json(baseline)
+    _validate_benchmark_output_path(arguments, manifest)
+    _write(rendered, arguments.output)
     return 0
 
 

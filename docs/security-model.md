@@ -35,7 +35,38 @@ The user chooses output paths. Before reading controls or writing output,
 overlap with any Verilog, Liberty, SDC, waiver, or baseline input. It can still
 overwrite an unrelated named output. `schema` can overwrite its named file;
 `demo` and `--format all` create directories and overwrite their known output
-names. Do not point them at sensitive files or shared untrusted paths.
+names. Benchmark report and baseline destinations receive an early overlap
+check against the declared and resolved cache plus its fixed `artifacts` and
+`sources` layers before manifest loading. After manifest selection, the check
+also covers only each required artifact's exact blob, digest root, and
+materialization root, without walking the cache tree. Same-entry versus
+hard-link disambiguation uses a fail-closed probe bounded to 4,096 sibling
+names. Before any acquisition or analysis, the selected cache root is
+materialized and identity is checked again, catching fresh case- and
+Unicode-normalization aliases even for suite-only selections. The selected-path
+check is repeated after acquisition or analysis, immediately before
+publication. Do not point outputs at sensitive files or shared
+untrusted paths, and do not allow another process to replace an output parent
+while a command is running. CLI named single-file output is staged in an
+exclusively created, short-named regular file in the resolved destination
+directory and published with same-directory atomic replacement. Existing final
+symlinks continue to address their referents, while a hard-linked output name is
+detached instead of truncating its other links. New outputs retain ordinary
+`0666`-subject-to-process-umask behavior; an existing regular output must still
+be openable for writing and its portable permission mode is carried to the
+replacement. Atomic replacement additionally requires write permission on the
+destination directory.
+
+Atomic publication covers ordinary staging, encoding, close, mode, and
+replacement failures: before replacement succeeds, the previously published
+destination bytes remain unchanged. Cleanup is best effort, and a cleanup error
+is attached without replacing the primary failure. This is not a crash-durability
+or sandbox guarantee. Abrupt process termination may leave a hidden staging
+file; power loss or a filesystem without atomic-rename guarantees may lose
+recent data; owner, ACLs, timestamps, extended attributes, and alternate data
+streams are not preserved; and an actor able to rename parent directories or
+links concurrently can race path validation and publication. Multi-file demo
+and `--format all` output retains its separately documented directory behavior.
 
 ### Reports
 

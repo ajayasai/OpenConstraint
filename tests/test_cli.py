@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
-from openconstraint.cli import _mode_inputs, main
+from openconstraint.cli import _mode_inputs, _write, main
 
 from .conftest import COMPLETE_SDC
 
@@ -82,6 +85,145 @@ def test_cli_schema_can_be_copied_to_file(tmp_path: Path) -> None:
 
     assert main(["schema", "--output", str(output)]) == 0
     assert json.loads(output.read_text(encoding="utf-8"))["title"] == "OpenConstraint audit report"
+
+
+def test_cli_atomic_single_file_preserves_existing_permission_mode(tmp_path: Path) -> None:
+    output = tmp_path / "schema.json"
+    output.write_text("reviewed\n", encoding="utf-8")
+    output.chmod(0o640)
+    expected_mode = stat.S_IMODE(output.stat().st_mode)
+
+    assert main(["schema", "--output", str(output)]) == 0
+
+    assert stat.S_IMODE(output.stat().st_mode) == expected_mode
+    assert json.loads(output.read_text(encoding="utf-8"))["title"] == "OpenConstraint audit report"
+
+
+def test_cli_atomic_single_file_preserves_final_symlink(tmp_path: Path) -> None:
+    referent = tmp_path / "referent.json"
+    referent.write_text("reviewed\n", encoding="utf-8")
+    output = tmp_path / "schema.json"
+    try:
+        output.symlink_to(referent)
+    except OSError as error:
+        pytest.skip(f"file symlinks are unavailable: {error}")
+
+    assert main(["schema", "--output", str(output)]) == 0
+
+    assert output.is_symlink()
+    assert output.resolve() == referent.resolve()
+    assert json.loads(referent.read_text(encoding="utf-8"))["title"] == "OpenConstraint audit report"
+
+
+def test_cli_atomic_single_file_reports_final_symlink_loop_as_input_error(tmp_path: Path, capsys) -> None:
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    try:
+        first.symlink_to(second)
+        second.symlink_to(first)
+    except OSError as error:
+        pytest.skip(f"file symlinks are unavailable: {error}")
+
+    with pytest.raises(SystemExit) as caught:
+        main(["schema", "--output", str(first)])
+
+    assert caught.value.code == 2
+    error = capsys.readouterr().err
+    assert "could not resolve output path" in error
+    assert "Traceback" not in error
+
+
+def test_cli_atomic_single_file_classifies_win32_resolve_loop_as_input_error(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "schema.json"
+    resolve_error = OSError(errno.EINVAL, "cannot resolve filename")
+    resolve_error.winerror = 1921
+    real_resolve = Path.resolve
+
+    def fail_output_resolve(path: Path, strict: bool = False) -> Path:
+        if path == output:
+            raise resolve_error
+        return real_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_output_resolve)
+    with pytest.raises(SystemExit) as caught:
+        main(["schema", "--output", str(output)])
+
+    assert caught.value.code == 2
+    error = capsys.readouterr().err
+    assert "could not resolve output path" in error
+    assert "Traceback" not in error
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_cli_atomic_new_file_respects_process_umask(tmp_path: Path) -> None:
+    output = tmp_path / "schema.json"
+    previous_umask = os.umask(0o027)
+    try:
+        assert main(["schema", "--output", str(output)]) == 0
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(output.stat().st_mode) == 0o640
+
+
+@pytest.mark.skipif(
+    os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root can open a read-only file for writing",
+)
+def test_cli_atomic_single_file_honors_existing_read_only_policy(tmp_path: Path, capsys) -> None:
+    output = tmp_path / "schema.json"
+    original = b"reviewed\n"
+    output.write_bytes(original)
+    output.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(SystemExit) as caught:
+            main(["schema", "--output", str(output)])
+    finally:
+        output.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert caught.value.code == 2
+    assert "input error" in capsys.readouterr().err
+    assert output.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX NAME_MAX semantics")
+def test_cli_atomic_single_file_supports_near_name_max_target(tmp_path: Path) -> None:
+    name_max = os.pathconf(tmp_path, "PC_NAME_MAX")
+    suffix = ".json"
+    output = tmp_path / ("r" * (name_max - len(suffix)) + suffix)
+
+    assert main(["schema", "--output", str(output)]) == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["title"] == "OpenConstraint audit report"
+
+
+def test_atomic_writer_cleanup_error_does_not_mask_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "schema.json"
+    output.write_text("reviewed\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def fail_replace(source: object, destination: object) -> None:
+        raise OSError(f"primary replacement failure for {source!s} -> {destination!s}")
+
+    def fail_temporary_cleanup(path: Path, *args, **kwargs) -> None:
+        if path.name.startswith(".openconstraint-"):
+            raise OSError("secondary cleanup failure")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr("openconstraint.cli.os.replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_temporary_cleanup)
+
+    with pytest.raises(OSError, match="primary replacement failure") as caught:
+        _write("replacement\n", str(output))
+
+    assert any("secondary cleanup failure" in note for note in caught.value.__notes__)
+    assert output.read_text(encoding="utf-8") == "reviewed\n"
 
 
 def test_cli_audit_json_stdout_and_success_exit_for_complete_design(project_files, capsys) -> None:

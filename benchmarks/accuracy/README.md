@@ -34,7 +34,7 @@ and untested catalog IDs so the score cannot imply coverage of rules absent
 from the truth set. The current SDC mutation layer intentionally leaves the
 structural-model and external-OpenSTA integration rules outside its scope.
 
-The committed suite currently contains 31 cases and 58 reviewed diagnostic
+The committed suite currently contains 32 cases and 62 reviewed diagnostic
 occurrences. It covers every catalog rule except `OC0002` and `OC6001`:
 `OC0002` requires a structural Verilog/Liberty/elaboration mutation, while
 `OC6001` requires an external process failure. Those behaviors have dedicated

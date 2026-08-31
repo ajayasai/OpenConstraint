@@ -4,6 +4,9 @@ import copy
 import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
 import tarfile
 import zipfile
 from dataclasses import replace
@@ -13,9 +16,11 @@ import pytest
 from jsonschema import Draft202012Validator
 
 import openconstraint.benchmark as benchmark_module
+import openconstraint.cli as cli_module
 from openconstraint.benchmark import (
     BASELINE_SCHEMA_VERSION,
     BenchmarkError,
+    BenchmarkManifest,
     _differences,
     _download_https,
     _download_request,
@@ -117,6 +122,81 @@ def _fixture(
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_bytes(blob)
     return manifest_path, cache, blob
+
+
+def _suite_only_fixture(tmp_path: Path) -> Path:
+    files = {
+        "design.v": SYNTHETIC_VERILOG,
+        "cells.lib": SYNTHETIC_LIBERTY,
+        "constraints.sdc": COMPLETE_SDC,
+    }
+    suite_files = []
+    for name, contents in files.items():
+        payload = contents.encode()
+        (tmp_path / name).write_bytes(payload)
+        suite_files.append(
+            {
+                "path": name,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        )
+    manifest = {
+        "schema_version": "1.0.0",
+        "suite": {
+            "id": "suite-only",
+            "name": "Suite-only fixture",
+            "description": "A fixture with no remotely acquired artifacts.",
+        },
+        "suite_files": suite_files,
+        "datasets": [
+            {
+                "id": "sample",
+                "description": "Inputs are committed beside the manifest.",
+                "artifacts": [],
+                "cases": [
+                    {
+                        "id": "functional",
+                        "description": "Complete single-mode constraints.",
+                        "top": "top",
+                        "verilog": ["suite:design.v"],
+                        "liberty": ["suite:cells.lib"],
+                        "modes": {"functional": ["suite:constraints.sdc"]},
+                    }
+                ],
+            }
+        ],
+    }
+    manifest_path = tmp_path / "suite-only-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
+
+
+def _tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | None]]:
+    return {
+        path.relative_to(root).as_posix(): (
+            "directory" if path.is_dir() else "file",
+            path.read_bytes() if path.is_file() else None,
+        )
+        for path in root.rglob("*")
+    }
+
+
+def _link_directory_or_skip(link: Path, target: Path) -> None:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            pytest.skip(f"directory junctions are unavailable: {completed.stderr or completed.stdout}")
+        return
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlinks are unavailable: {error}")
 
 
 def test_manifest_digest_is_canonical_and_records_provenance(tmp_path: Path) -> None:
@@ -254,8 +334,12 @@ def test_manifest_schema_rejects_non_normalized_paths(path: str) -> None:
 def test_offline_acquisition_verifies_extracts_and_reuses_cache(tmp_path: Path) -> None:
     manifest_path, cache, _ = _fixture(tmp_path)
     artifact = load_manifest(manifest_path).datasets[0].artifacts[0]
+    cache_paths = benchmark_module.artifact_cache_paths(artifact, cache)
 
     root = acquire_artifact(artifact, cache, offline=True)
+    assert root == cache_paths.logical_root
+    assert root.parent == cache_paths.materialization_root
+    assert cache_paths.blob.is_file()
     assert (root / "design.v").is_file()
     assert acquire_artifact(artifact, cache, offline=True) == root
 
@@ -868,6 +952,942 @@ def test_cli_rejects_benchmark_output_that_overlaps_manifest_or_baseline(tmp_pat
     assert caught.value.code == 2
     assert "must not overlap --baseline input path" in capsys.readouterr().err
     assert baseline.read_bytes() == original_baseline
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="case and Unicode lookup aliases are macOS-specific")
+@pytest.mark.parametrize(
+    ("stored_name", "alias_name"),
+    [
+        ("manifest.json", "MANIFEST.JSON"),
+        ("caf\N{LATIN SMALL LETTER E WITH ACUTE}.json", "cafe\N{COMBINING ACUTE ACCENT}.json"),
+    ],
+)
+def test_cli_rejects_macos_manifest_leaf_alias_before_loading(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_name: str,
+    alias_name: str,
+) -> None:
+    manifest_path = tmp_path / stored_name
+    manifest_path.write_text("{}", encoding="utf-8")
+    output_alias = tmp_path / alias_name
+    if not output_alias.exists():
+        pytest.skip("temporary filesystem does not alias these filename spellings")
+    original = manifest_path.read_bytes()
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for input-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(tmp_path / "cache"),
+                "--offline",
+                "--output",
+                str(output_alias),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --manifest input path" in capsys.readouterr().err
+    assert not manifest_loaded
+    assert manifest_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("same_parent", [False, True])
+def test_cli_allows_atomic_output_hardlinked_to_manifest(tmp_path: Path, same_parent: bool) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    original = manifest_path.read_bytes()
+    output = (tmp_path if same_parent else tmp_path / "external") / "hardlinked-fetch.json"
+    output.parent.mkdir(exist_ok=True)
+    try:
+        os.link(manifest_path, output)
+    except OSError as error:
+        pytest.skip(f"hard links are unavailable: {error}")
+    assert os.path.samefile(manifest_path, output)
+
+    assert (
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert manifest_path.read_bytes() == original
+    assert not os.path.samefile(manifest_path, output)
+    assert json.loads(output.read_text(encoding="utf-8"))["kind"] == "benchmark-fetch"
+
+
+def test_benchmark_input_identity_handles_same_name_and_single_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source" / "input.json"
+    source.parent.mkdir()
+    source.write_text("{}", encoding="utf-8")
+    same_name = tmp_path / "alias" / source.name
+    different_name = source.with_name("other.json")
+    monkeypatch.setattr(cli_module.os.path, "samefile", lambda _left, _right: True)
+
+    assert cli_module._same_benchmark_input_entry(same_name, source)
+    assert cli_module._same_benchmark_input_entry(different_name, source)
+
+
+@pytest.mark.parametrize("probe", ["limit", "error", "empty"])
+def test_benchmark_input_identity_probe_fails_closed_with_bounded_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe: str,
+) -> None:
+    source = tmp_path / "source.json"
+    candidate = tmp_path / "candidate.json"
+    source.write_text("{}", encoding="utf-8")
+    try:
+        os.link(source, candidate)
+    except OSError as error:
+        pytest.skip(f"hard links are unavailable: {error}")
+    if probe == "limit":
+        monkeypatch.setattr(cli_module, "_BENCHMARK_INPUT_ENTRY_PROBE_LIMIT", 0)
+    elif probe == "error":
+
+        def fail_scan(_path: object):
+            raise OSError("forced directory probe failure")
+
+        monkeypatch.setattr(cli_module.os, "scandir", fail_scan)
+    else:
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        real_scandir = cli_module.os.scandir
+        monkeypatch.setattr(cli_module.os, "scandir", lambda _path: real_scandir(empty))
+
+    assert cli_module._same_benchmark_input_entry(candidate, source)
+
+
+def test_cache_ancestor_identity_delegates_file_alias_disambiguation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.json"
+    candidate = tmp_path / "candidate.json"
+    source.write_text("{}", encoding="utf-8")
+    try:
+        os.link(source, candidate)
+    except OSError as error:
+        pytest.skip(f"hard links are unavailable: {error}")
+    monkeypatch.setattr(cli_module, "_same_benchmark_input_entry", lambda _left, _right: True)
+
+    assert cli_module._existing_ancestor_matches(candidate, source)
+
+
+def test_cli_rejects_all_benchmark_outputs_inside_cache_before_work(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    artifact = manifest.datasets[0].artifacts[0]
+    logical_root = acquire_artifact(artifact, cache, offline=True)
+    blob_path = cache / "artifacts" / f"{hashlib.sha256(blob).hexdigest()}.blob"
+    materialized_path = logical_root / "design.v"
+    before = _tree_snapshot(cache)
+    manifest_loads = 0
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loads
+        manifest_loads += 1
+        raise AssertionError(f"manifest load should not occur for cache-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    common = ["--manifest", str(manifest_path), "--cache-dir", str(cache), "--offline"]
+    for command, output in (
+        ("fetch", blob_path),
+        ("run", materialized_path),
+        ("baseline", cache),
+    ):
+        with pytest.raises(SystemExit) as caught:
+            main(["benchmark", command, *common, "--output", str(output)])
+        assert caught.value.code == 2
+        assert "must not overlap --cache-dir path" in capsys.readouterr().err
+        assert manifest_loads == 0
+        assert _tree_snapshot(cache) == before
+
+
+def test_cli_benchmark_cache_overlap_check_resolves_directory_symlinks(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    alias = tmp_path / "cache-alias"
+    try:
+        alias.symlink_to(cache, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlinks are unavailable: {error}")
+
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for cache-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    output = alias / "results" / "fetch.json"
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert not manifest_loaded
+    assert not output.exists()
+
+
+def test_cli_benchmark_output_symlink_loop_is_a_clean_input_error(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    try:
+        first.symlink_to(second)
+        second.symlink_to(first)
+    except OSError as error:
+        pytest.skip(f"file symlinks are unavailable: {error}")
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for a looping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(first),
+            ]
+        )
+
+    assert caught.value.code == 2
+    error = capsys.readouterr().err
+    assert "could not resolve benchmark output path" in error
+    assert "Traceback" not in error
+    assert not manifest_loaded
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 extended namespaces are Windows-specific")
+@pytest.mark.parametrize("namespace_prefix", ["\\\\?\\", "\\\\.\\"])
+def test_cli_benchmark_cache_overlap_normalizes_windows_extended_namespace(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    namespace_prefix: str,
+) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    blob_path = cache / "artifacts" / f"{hashlib.sha256(blob).hexdigest()}.blob"
+    extended_output = namespace_prefix + str(blob_path.resolve())
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for cache-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                extended_output,
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert not manifest_loaded
+    assert blob_path.read_bytes() == blob
+
+
+@pytest.mark.skipif(os.name != "nt", reason="substituted-drive aliases are Windows-specific")
+def test_cli_benchmark_cache_overlap_uses_existing_ancestor_identity_for_fresh_cache(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    physical_root = tmp_path / "physical-root"
+    physical_root.mkdir()
+    drive = next((letter for letter in reversed("DEFGHIJKLMNOPQRSTUVWXYZ") if not Path(f"{letter}:\\").exists()), None)
+    if drive is None:
+        pytest.skip("no unused drive letter is available for a substituted-drive alias")
+    mapped = subprocess.run(
+        ["subst.exe", f"{drive}:", str(physical_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if mapped.returncode != 0:
+        pytest.skip(f"substituted drives are unavailable: {mapped.stderr or mapped.stdout}")
+
+    cache = physical_root / "fresh-cache"
+    output = Path(f"{drive}:\\fresh-cache\\artifacts\\fetch.json")
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for cache-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    try:
+        with pytest.raises(SystemExit) as caught:
+            main(
+                [
+                    "benchmark",
+                    "fetch",
+                    "--manifest",
+                    str(manifest_path),
+                    "--cache-dir",
+                    str(cache),
+                    "--offline",
+                    "--output",
+                    str(output),
+                ]
+            )
+        assert caught.value.code == 2
+        assert "must not overlap --cache-dir path" in capsys.readouterr().err
+        assert not manifest_loaded
+        assert not cache.exists()
+        assert not output.exists()
+    finally:
+        subprocess.run(
+            ["subst.exe", f"{drive}:", "/D"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_cli_benchmark_cache_overlap_rejects_inverse_file_symlink(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    blob_path = cache / "artifacts" / f"{hashlib.sha256(blob).hexdigest()}.blob"
+    external_blob = tmp_path / "external" / "design.blob"
+    external_blob.parent.mkdir()
+    external_blob.write_bytes(blob)
+    blob_path.unlink()
+    try:
+        blob_path.symlink_to(external_blob)
+    except OSError as error:
+        pytest.skip(f"file symlinks are unavailable: {error}")
+    manifest_loads = 0
+    fetches = 0
+    real_load_manifest = cli_module.load_manifest
+
+    def tracked_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loads
+        manifest_loads += 1
+        return real_load_manifest(path)
+
+    def unexpected_fetch(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal fetches
+        fetches += 1
+        raise AssertionError("artifact acquisition must not occur for a selected cache-blob referent")
+
+    monkeypatch.setattr(cli_module, "load_manifest", tracked_manifest_load)
+    monkeypatch.setattr(cli_module, "fetch_suite", unexpected_fetch)
+    common = ["--manifest", str(manifest_path), "--cache-dir", str(cache), "--offline"]
+    with pytest.raises(SystemExit) as caught:
+        main(["benchmark", "fetch", *common, "--output", str(blob_path)])
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert manifest_loads == 0
+
+    with pytest.raises(SystemExit) as caught:
+        main(["benchmark", "fetch", *common, "--output", str(external_blob)])
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+
+    assert manifest_loads == 1
+    assert fetches == 0
+    assert blob_path.is_symlink()
+    assert external_blob.read_bytes() == blob
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="case and Unicode lookup aliases are macOS-specific")
+@pytest.mark.parametrize(
+    ("stored_name", "alias_name"),
+    [
+        ("selected.blob", "SELECTED.BLOB"),
+        ("caf\N{LATIN SMALL LETTER E WITH ACUTE}.blob", "cafe\N{COMBINING ACUTE ACCENT}.blob"),
+    ],
+)
+def test_cli_rejects_selected_blob_final_leaf_alias_before_acquisition(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_name: str,
+    alias_name: str,
+) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    artifact = load_manifest(manifest_path).datasets[0].artifacts[0]
+    blob_path = cache / "artifacts" / f"{artifact.sha256}.blob"
+    external = tmp_path / "external"
+    external.mkdir()
+    referent = external / stored_name
+    referent.write_bytes(blob)
+    blob_path.unlink()
+    try:
+        blob_path.symlink_to(referent)
+    except OSError as error:
+        pytest.skip(f"file symlinks are unavailable: {error}")
+    output_alias = external / alias_name
+    if not output_alias.exists():
+        pytest.skip("temporary filesystem does not alias these filename spellings")
+    manifest_loads = 0
+    fetches = 0
+    real_load_manifest = cli_module.load_manifest
+
+    def tracked_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loads
+        manifest_loads += 1
+        return real_load_manifest(path)
+
+    def unexpected_fetch(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal fetches
+        fetches += 1
+        raise AssertionError("acquisition must not occur for a selected blob leaf alias")
+
+    monkeypatch.setattr(cli_module, "load_manifest", tracked_manifest_load)
+    monkeypatch.setattr(cli_module, "fetch_suite", unexpected_fetch)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output_alias),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert manifest_loads == 1
+    assert fetches == 0
+    assert referent.read_bytes() == blob
+
+
+def test_cli_benchmark_cache_overlap_rejects_linked_artifact_layer(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    artifact_dir = cache / "artifacts"
+    blob_path = artifact_dir / f"{hashlib.sha256(blob).hexdigest()}.blob"
+    external_artifacts = tmp_path / "external-artifacts"
+    external_artifacts.mkdir()
+    external_blob = external_artifacts / blob_path.name
+    blob_path.replace(external_blob)
+    artifact_dir.rmdir()
+    _link_directory_or_skip(artifact_dir, external_artifacts)
+    assert artifact_dir.resolve() == external_artifacts.resolve()
+    manifest_loaded = False
+
+    def unexpected_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loaded
+        manifest_loaded = True
+        raise AssertionError(f"manifest load should not occur for cache-overlapping output {path}")
+
+    monkeypatch.setattr(cli_module, "load_manifest", unexpected_manifest_load)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(external_blob),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert not manifest_loaded
+    assert external_blob.read_bytes() == blob
+
+
+def test_cli_benchmark_cache_overlap_rejects_linked_materialization_root(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    logical_root = acquire_artifact(manifest.datasets[0].artifacts[0], cache, offline=True)
+    materialization_root = logical_root.parent
+    external_materialization = tmp_path / "external-materialization"
+    materialization_root.replace(external_materialization)
+    _link_directory_or_skip(materialization_root, external_materialization)
+    external_design = external_materialization / logical_root.name / "design.v"
+    original = external_design.read_bytes()
+    assert materialization_root.resolve() == external_materialization.resolve()
+    manifest_loads = 0
+    runs = 0
+    real_load_manifest = cli_module.load_manifest
+
+    def tracked_manifest_load(path: str | Path) -> BenchmarkManifest:
+        nonlocal manifest_loads
+        manifest_loads += 1
+        return real_load_manifest(path)
+
+    def unexpected_run(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal runs
+        runs += 1
+        raise AssertionError("analysis must not occur for a selected materialization referent")
+
+    monkeypatch.setattr(cli_module, "load_manifest", tracked_manifest_load)
+    monkeypatch.setattr(cli_module, "run_suite", unexpected_run)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "run",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(external_design),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert manifest_loads == 1
+    assert runs == 0
+    assert external_design.read_bytes() == original
+
+
+def test_benchmark_output_validation_is_bounded_by_selected_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    junk = cache / "sources"
+    junk.mkdir()
+    for index in range(128):
+        (junk / f"unreferenced-{index:03d}").mkdir()
+    output = tmp_path / "bounded-fetch.json"
+    arguments = cli_module._parser().parse_args(
+        [
+            "benchmark",
+            "fetch",
+            "--manifest",
+            str(manifest_path),
+            "--cache-dir",
+            str(cache),
+            "--offline",
+            "--output",
+            str(output),
+        ]
+    )
+    path_derivations = 0
+    real_artifact_cache_paths = cli_module.artifact_cache_paths
+
+    def tracked_artifact_cache_paths(*args: object, **kwargs: object):
+        nonlocal path_derivations
+        path_derivations += 1
+        return real_artifact_cache_paths(*args, **kwargs)
+
+    def unexpected_scan(*args: object, **kwargs: object):
+        raise AssertionError("benchmark output validation must not enumerate cache contents")
+
+    monkeypatch.setattr(cli_module, "artifact_cache_paths", tracked_artifact_cache_paths)
+    monkeypatch.setattr(cli_module.os, "scandir", unexpected_scan)
+
+    cli_module._validate_benchmark_output_path(arguments, manifest)
+
+    assert path_derivations == 1
+
+
+def test_unreferenced_cache_indirection_does_not_reserve_external_output(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    sources = cache / "sources"
+    sources.mkdir()
+    external = tmp_path / "unrelated-output-parent"
+    external.mkdir()
+    _link_directory_or_skip(sources / "unreferenced-junk", external)
+    output = external / "fetch.json"
+
+    assert (
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text(encoding="utf-8"))["kind"] == "benchmark-fetch"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="case-insensitive fresh-cache alias is macOS-specific")
+def test_cli_revalidates_fresh_case_alias_before_acquisition(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        pytest.skip("temporary filesystem is case-sensitive")
+    probe.rmdir()
+
+    entries = {
+        "bundle/design.v": SYNTHETIC_VERILOG,
+        "bundle/cells.lib": SYNTHETIC_LIBERTY,
+        "bundle/constraints.sdc": COMPLETE_SDC,
+    }
+    blob = _zip_bytes(entries)
+    digest = hashlib.sha256(blob).hexdigest()
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_manifest_payload(blob)), encoding="utf-8")
+    cache = tmp_path / "FreshCache"
+    selected_blob = cache / "artifacts" / f"{digest}.blob"
+    output_alias = tmp_path / "freshcache" / "artifacts" / f"{digest}.blob"
+    downloads = 0
+
+    def download(_artifact: object, destination: Path) -> None:
+        nonlocal downloads
+        downloads += 1
+        destination.write_bytes(blob)
+
+    monkeypatch.setattr(benchmark_module, "_download_https", download)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--output",
+                str(output_alias),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert downloads == 0
+    assert not selected_blob.exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="case and Unicode lookup aliases are macOS-specific")
+@pytest.mark.parametrize(
+    ("cache_name", "alias_name"),
+    [
+        ("FreshCache", "freshcache"),
+        ("caf\N{LATIN SMALL LETTER E WITH ACUTE}-cache", "cafe\N{COMBINING ACUTE ACCENT}-cache"),
+    ],
+)
+def test_cli_materializes_suite_only_cache_before_alias_revalidation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    cache_name: str,
+    alias_name: str,
+) -> None:
+    manifest_path = _suite_only_fixture(tmp_path)
+    cache = tmp_path / cache_name
+    alias = tmp_path / alias_name
+    cache.mkdir()
+    if not alias.exists():
+        pytest.skip("temporary filesystem does not alias these directory spellings")
+    cache.rmdir()
+    fetches = 0
+
+    def unexpected_fetch(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal fetches
+        fetches += 1
+        raise AssertionError("suite fetch must not run for a newly observable cache alias")
+
+    monkeypatch.setattr(cli_module, "fetch_suite", unexpected_fetch)
+    output = alias / "artifacts" / "fetch.json"
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "must not overlap --cache-dir path" in capsys.readouterr().err
+    assert cache.is_dir()
+    assert fetches == 0
+    assert not output.exists()
+
+
+def test_cli_does_not_materialize_cache_for_invalid_selection(tmp_path: Path, capsys) -> None:
+    manifest_path, _, _ = _fixture(tmp_path)
+    cache = tmp_path / "uncreated-cache"
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--dataset",
+                "missing",
+                "--offline",
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "unknown dataset" in capsys.readouterr().err
+    assert not cache.exists()
+
+
+def test_cli_does_not_materialize_cache_for_invalid_baseline(tmp_path: Path, capsys) -> None:
+    manifest_path, _, _ = _fixture(tmp_path)
+    baseline = tmp_path / "invalid-baseline.json"
+    baseline.write_text("{}", encoding="utf-8")
+    cache = tmp_path / "uncreated-cache"
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "run",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--baseline",
+                str(baseline),
+                "--offline",
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "unsupported benchmark baseline schema" in capsys.readouterr().err
+    assert not cache.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="dangling directory symlinks are POSIX-specific")
+def test_cli_materializes_dangling_cache_symlink_referent(tmp_path: Path) -> None:
+    manifest_path = _suite_only_fixture(tmp_path)
+    referent = tmp_path / "external" / "missing" / "cache"
+    cache = tmp_path / "cache-link"
+    cache.symlink_to(referent, target_is_directory=True)
+    output = tmp_path / "fetch.json"
+
+    assert (
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert cache.is_symlink()
+    assert referent.is_dir()
+    assert json.loads(output.read_text(encoding="utf-8"))["kind"] == "benchmark-fetch"
+
+
+def test_cli_allows_benchmark_output_adjacent_to_cache(tmp_path: Path) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    output = cache.with_name("cache-fetch.json")
+
+    assert (
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(output.read_text(encoding="utf-8"))["kind"] == "benchmark-fetch"
+
+
+def test_cli_atomic_output_does_not_truncate_hardlinked_cache_blob(tmp_path: Path) -> None:
+    manifest_path, cache, blob = _fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    artifact = manifest.datasets[0].artifacts[0]
+    acquire_artifact(artifact, cache, offline=True)
+    blob_path = cache / "artifacts" / f"{hashlib.sha256(blob).hexdigest()}.blob"
+    output = tmp_path / "hardlinked-fetch.json"
+    try:
+        os.link(blob_path, output)
+    except OSError as error:
+        pytest.skip(f"hard links are unavailable: {error}")
+    assert os.path.samefile(blob_path, output)
+    before = _tree_snapshot(cache)
+
+    assert (
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    assert _tree_snapshot(cache) == before
+    assert blob_path.read_bytes() == blob
+    assert not os.path.samefile(blob_path, output)
+    assert json.loads(output.read_text(encoding="utf-8"))["kind"] == "benchmark-fetch"
+
+
+def test_cli_atomic_output_replace_failure_preserves_output_and_cleans_temp(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache, _ = _fixture(tmp_path)
+    manifest = load_manifest(manifest_path)
+    acquire_artifact(manifest.datasets[0].artifacts[0], cache, offline=True)
+    before = _tree_snapshot(cache)
+    output = tmp_path / "failed-output.json"
+    original = b"reviewed output\n"
+    output.write_bytes(original)
+
+    def fail_replace(source: object, destination: object) -> None:
+        raise OSError(f"forced replace failure for {source!s} -> {destination!s}")
+
+    monkeypatch.setattr(cli_module.os, "replace", fail_replace)
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "benchmark",
+                "fetch",
+                "--manifest",
+                str(manifest_path),
+                "--cache-dir",
+                str(cache),
+                "--offline",
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "forced replace failure" in capsys.readouterr().err
+    assert output.read_bytes() == original
+    assert list(tmp_path.glob(".openconstraint-*.tmp")) == []
+    assert _tree_snapshot(cache) == before
 
 
 def test_difference_messages_cover_missing_and_unexpected_values() -> None:

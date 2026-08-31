@@ -76,6 +76,23 @@ network, fails if the exact blob is absent, and can safely rebuild a missing or
 damaged materialization from that blob. Online acquisition uses HTTPS, caps the
 download at the pinned byte count, rejects a redirect away from HTTPS, downloads
 to a temporary file, and publishes it atomically only after verification.
+Fetch, run, and baseline outputs may not resolve to the cache directory or any
+path beneath it. An early check covers the declared and resolved cache and its
+fixed `artifacts` and `sources` layers before manifest loading. After selection,
+the checker additionally protects the exact required blobs, digest roots, and
+materialization roots without walking the cache tree. Same-entry versus
+hard-link disambiguation, when needed, probes at most 4,096 sibling names. The
+selected cache root is then created and the checker runs again before any
+acquisition or analysis. This makes case- and Unicode-normalization aliases
+observable even when a suite-only selection needs no artifact. A final check
+runs after acquisition or analysis, immediately before report publication. With
+stable, trusted cache and output-parent directories, these checks prevent a
+report from replacing selected cache state. Reports are then published by
+atomic same-directory replacement, which prevents an output hard-linked from
+outside the cache from truncating the cached inode. The checks do not defend
+against a concurrent process that can replace an ancestor between the final
+validation and replacement; do not use cache or output parents writable by
+other users.
 
 The 12.8 MB Liberty blob exceeds GitHub's direct raw-file limit, so its immutable
 Contents API URL is fetched with GitHub's documented raw media type. The other,
