@@ -1,0 +1,4 @@
+direct clock-pin propagation
+multicycle positional rewrite
+implicit setup-hold replacement
+Tcl-safe clock names
