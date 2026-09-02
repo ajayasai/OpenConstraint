@@ -2,13 +2,15 @@
 
 OpenConstraint v0.3.0-beta performs deterministic, static checks over a
 documented subset of structural Verilog, Liberty, and Tcl/SDC. It is intended
-for lint, review, and CI coverage feedback. It is not a static-timing sign-off
-engine and does not prove timing exceptions.
+for lint, review, CI coverage feedback, and replayable structural path analysis.
+It is not a static-timing sign-off engine and does not prove that an exception
+is functionally valid.
 
 ## Start here
 
 - [Getting started](getting-started.md)
 - [CLI reference](cli.md)
+- [Proof-carrying structural exception analysis](proof-carrying-analysis.md)
 - [Rule reference](rules/index.md)
 - [Coverage methodology](coverage-methodology.md)
 - [Report formats](report-formats.md)
@@ -40,4 +42,11 @@ Machine-readable schemas:
 openconstraint schema --output openconstraint-report.schema.json
 openconstraint schema --kind waivers --output openconstraint-waivers.schema.json
 openconstraint schema --kind baseline --output openconstraint-diagnostic-baseline.schema.json
+```
+
+Proof and repair schemas can also be exported directly:
+
+```console
+openconstraint-prove schema --kind proof --output openconstraint-proof.schema.json
+openconstraint-prove schema --kind repair --output openconstraint-repair.schema.json
 ```

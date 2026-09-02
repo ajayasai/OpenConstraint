@@ -1,9 +1,14 @@
 # Roadmap
 
-This roadmap communicates direction, not delivery dates or commitments. Work is
-prioritized through public issues and the governance process.
+This roadmap is an evidence-driven engineering programme, not a delivery-date
+promise. OpenConstraint will claim superiority only for capabilities that are
+measured on the same inputs with a published oracle. The goal is broader:
+build the most inspectable, reproducible, automation-friendly constraint
+verification system, then earn any comparative claim with independent data.
 
-## 0.1 beta — auditable static foundation
+## 0.1–0.3 beta — auditable static foundation
+
+Delivered:
 
 - Non-executing Tcl/SDC parsing with explicit unsupported-syntax findings.
 - Structural Verilog and Liberty indexing.
@@ -12,56 +17,110 @@ prioritized through public issues and the governance process.
 - Text, JSON, SARIF, and HTML output suitable for local and CI use.
 - Explicit trusted-input OpenSTA validation with per-mode subprocess isolation,
   finite timeout, effective-SDC provenance, and no bundled OpenSTA binary.
+- Checksum-pinned public-design benchmarks, reviewed semantic baselines,
+  occurrence-level accuracy truth sets, parser fuzzing, diagnostic baselines,
+  expiring waivers, and strict stale-control gates.
 
-## 0.2 beta — public evidence and parser resilience
+## 0.4 beta — proof-carrying exception review
 
-- Checksum-pinned OpenROAD SKY130HD AES, Ibex, and JPEG scale/compatibility
-  benchmarks with reviewed semantic baselines and strict machine-readable
-  manifests.
-- Offline-verifiable acquisition that keeps third-party design data upstream and
-  records exact provenance, licenses, sizes, and digests.
-- Hypothesis properties, seed-corpus replay, and scheduled Atheris/libFuzzer
-  mutation for Tcl/SDC, Verilog, and Liberty parsers.
-- Explicit parser bounds for pathological bus ranges, Liberty nesting, and
-  hierarchical elaboration.
-- Transparent upstream-static versus coverage-reference evidence for Tcl
-  helpers the safe backend deliberately does not execute.
+The first step beyond ordinary lint is replayable structural proof evidence:
 
-## 0.3 beta — semantic hardening and adoption controls
+- A canonical directed port/net/pin graph with explicit resource limits.
+- Deterministic shortest witnesses for exception scopes that cover a real
+  structural path.
+- Exhaustive, replayable vacuity certificates when no path satisfies the
+  resolved ordered `-from`/`-through`/`-to` scope.
+- Clock-scope expansion to the launch and capture pins of clocked sequential
+  instances without crossing sequential state.
+- Certificate, graph, exception, and complete-pack SHA-256 identities.
+- A verifier that rebuilds the graph and rejects altered or stale proof packs.
+- Machine-readable, review-required repair plans that never guess timing
+  values or edit SDC automatically.
 
-- Versioned exact-fingerprint diagnostic baselines and expiring waivers with
-  strict stale-control gates and report provenance.
-- Occurrence-level semantic accuracy truth sets with public precision/recall
-  evidence and closed machine-readable schemas.
-- Source-pinned OpenSTA build-and-validation CI while keeping Tcl execution
-  explicit and outside the default static backend.
-- Liberty dependency-arc clock propagation, structural-model fail-closed
-  behavior, and deterministic active I/O-delay replay.
-- Slot-level I/O coverage, unresolved dynamic/partial query obligations, and
-  stricter generated-clock, exception, and clock-group validation.
+This milestone proves structural reachability or structural vacuity only. It
+never calls a structurally absent path *functionally false*.
 
-## 0.4 — extension and flow integration
+## 0.5 — functional exception proof and counterexamples
 
-- Improve source spans and extend adoption controls with organization-level
-  policy composition.
-- Versioned custom-rule interface with deterministic inputs and outputs.
-- Richer clock-domain and exception-relationship visualization.
-- Mode-diff policies and broader review workflows around shipped waivers.
-- Reusable GitHub Actions and documented integrations for other CI systems.
-- Performance and memory regression dashboards on public designs.
+- Extract bit-accurate combinational and bounded sequential cones from a
+  synthesis-grade intermediate representation.
+- Add pluggable SAT/SMT and sequential-property backends with versioned solver
+  manifests and independently replayable proof or counterexample artifacts.
+- Prove or refute false paths and multicycle assumptions under explicit reset,
+  mode, clock, and environmental assumptions.
+- Generate SVA/PSL-style review properties from each proof obligation and bind
+  every accepted exception to the assumptions that make it valid.
+- Distinguish proven, disproven, inconclusive, resource-bounded, and
+  assumption-incomplete outcomes; never convert solver uncertainty into a pass.
+
+## 0.6 — hierarchical constraint equivalence and transformation
+
+- Compare block-level and top-level effective constraint semantics.
+- Implement proof-carrying promotion and demotion proposals for clocks, I/O
+  delays, and exceptions.
+- Add timing-budget contracts with provenance, unit handling, corner/mode
+  dimensions, and round-trip equivalence checks.
+- Report hierarchy-boundary counterexamples when transformed constraints alter
+  the set of timed or cut paths.
+- Support reusable IP constraint packages with explicit assumptions and
+  compatibility negotiation rather than opaque vendor databases.
+
+## 0.7 — broad, safe Tcl/SDC compatibility
+
+- Introduce a typed Tcl/SDC intermediate representation that separates data,
+  control flow, collection queries, and side effects.
+- Symbolically evaluate a documented, bounded Tcl subset with deterministic
+  branch and loop limits.
+- Define a sandbox protocol for trusted full-interpreter execution with
+  filesystem, process, network, CPU, memory, and wall-clock restrictions.
+- Add versioned Synopsys-, Cadence-, Siemens-, and OpenSTA-dialect compatibility
+  profiles tested against legally redistributable conformance corpora.
+- Preserve fail-closed behavior whenever semantics cannot be reproduced.
+
+## 0.8 — automatic constraint synthesis with proof obligations
+
+- Infer candidate primary/generated clocks and interface relationships from
+  connectivity, protocol metadata, and user-supplied architecture contracts.
+- Synthesize the smallest deterministic constraint set that satisfies explicit
+  coverage and policy objectives.
+- Attach provenance and proof obligations to every generated command.
+- Require human approval for architectural timing values and functional
+  assumptions; optimization may simplify evidence but may not invent intent.
+- Compare generated and existing constraints and produce an auditable semantic
+  patch instead of rewriting files opaquely.
+
+## 0.9 — incremental, distributed, industrial-scale analysis
+
+- Content-addressed parsing, elaboration, query, graph, and proof caches.
+- Incremental invalidation by changed design, library, constraint, mode, and
+  policy dependency.
+- Deterministic parallel and distributed execution with mergeable proof packs.
+- Public million-instance and thousand-clock scale suites with runtime, peak
+  memory, cache-hit, and incremental-latency regression gates.
+- Fault isolation and resumable analysis so one bounded cone does not erase
+  completed evidence for unrelated scopes.
 
 ## 1.0 readiness criteria
 
-- Stable CLI, configuration, diagnostic IDs, exit codes, and report schemas.
-- Published compatibility matrix and upgrade/deprecation policy.
-- Reproducible benchmark evidence and a security review of parser boundaries.
-- Multiple active maintainers and a documented release succession path.
-- No known critical correctness issue in the supported static subset.
+- Stable CLI, configuration, diagnostic IDs, proof algorithms, exit codes, and
+  versioned report schemas with documented migrations.
+- Functional exception proof on an independently reviewed corpus containing
+  clean controls, real defects, adversarial cases, hierarchy transformations,
+  and multiple modes/corners.
+- Published precision, recall, false-pass rate, runtime, memory, incremental
+  latency, proof replay success, and human waiver burden.
+- Legally shareable, same-input comparisons against licensed commercial tools,
+  with vendor versions and settings recorded and results repeatable by an
+  independent party where licence terms permit.
+- Multiple active maintainers, external users, a security review, release
+  succession, and no known critical correctness issue in the claimed scope.
 
-## Explicit non-goals
+## Claim policy
 
-- Replacing STA sign-off or claiming equivalence to commercial constraint tools.
-- Formally proving false paths in the 0.x line.
-- Silently executing Tcl to increase apparent SDC compatibility.
-- Treating a 100% structural-coverage score as proof that constraints are
-  functionally correct or complete for silicon sign-off.
+OpenConstraint may claim a measured advantage—such as more reproducible proof
+artifacts, safer untrusted-input handling, lower deployment friction, or better
+CI interoperability—when the supporting experiment is public. It must not say
+"better than all closed-source alternatives" until an independent, same-input
+comparison demonstrates overall superiority across correctness, coverage,
+scale, usability, support burden, and total cost for a clearly defined target
+workflow.
