@@ -1,0 +1,83 @@
+name: Bootstrap adoption experience
+
+on:
+  push:
+    branches: [feat/adoption-experience]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feat/adoption-experience
+          fetch-depth: 0
+
+      - name: Apply staged text patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/patch.00 .bootstrap/patch.01 .bootstrap/patch.02 .bootstrap/patch.rest \
+            | base64 --decode \
+            | tar -xzf - -C .
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Generate launch assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "Pillow==11.3.0"
+          python tools/generate_launch_assets.py
+
+      - name: Validate staged implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile .github/scripts/run_openconstraint_action.py
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          root = Path(".")
+          required = (
+              root / "README.md",
+              root / "action.yml",
+              root / ".github/scripts/run_openconstraint_action.py",
+              root / ".github/workflows/action-smoke.yml",
+              root / "docs/getting-started.md",
+              root / "docs/ci-integration.md",
+              root / "docs/assets/openconstraint-demo.gif",
+              root / "docs/assets/social-preview.png",
+          )
+          for path in required:
+              assert path.is_file() and path.stat().st_size > 0, path
+          project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+          assert project["project"]["version"] == "0.3.0b0"
+          PY
+
+      - name: Commit implementation and remove bootstrap files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap-adoption.yml
+          rm -f tools/generate_launch_assets.py
+          rmdir tools 2>/dev/null || true
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit \
+            -m "feat: improve adoption experience" \
+            -m "Add a product-first README, release-wheel install path, reusable GitHub Action, smoke tests, launch assets, and discovery metadata." \
+            -m "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          git push origin HEAD:feat/adoption-experience
