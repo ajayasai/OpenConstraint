@@ -1,0 +1,50 @@
+name: Sequential proof and native SAT validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sequential-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - name: Install explicit validation dependencies
+        run: |
+          python -m pip install -e '.[dev,formal]'
+          python -c 'import z3; print(z3.get_version_string())'
+          sudo apt-get update -qq
+          sudo apt-get install -y yosys
+      - name: Run sequential and corruption regression tests
+        run: pytest tests/test_sequential.py
+      - name: Synthesize and compare independent verification paths
+        run: python examples/sequential/validate.py --yosys --output build/sequential-validation
+      - name: Record the tested source revision
+        if: always()
+        run: |
+          mkdir -p build/sequential-validation
+          git rev-parse HEAD > build/sequential-validation/tested-commit.txt
+          git rev-parse 'HEAD^{tree}' > build/sequential-validation/source-tree-sha.txt
+          git ls-tree -r HEAD > build/sequential-validation/source-tree.txt
+      - name: Preserve proof, waveform, source and native-SAT evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sequential-verification-evidence
+          path: build/sequential-validation/
+          if-no-files-found: warn
+          retention-days: 30
