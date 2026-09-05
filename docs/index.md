@@ -12,6 +12,7 @@ is functionally valid.
 - [CLI reference](cli.md)
 - [Proof-carrying structural exception analysis](proof-carrying-analysis.md)
 - [Experimental Boolean influence and counterexample replay](functional-analysis.md)
+- [Reset-aware synchronous safety proofs and waveform replay](sequential-analysis.md)
 - [Rule reference](rules/index.md)
 - [Coverage methodology](coverage-methodology.md)
 - [Report formats](report-formats.md)
