@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/oc-export/wheels
-          git archive --format=tar HEAD > /tmp/oc-export/source.tar
-          python -m pip download --only-binary=:all: --dest /tmp/oc-export/wheels pytest pytest-cov hypothesis jsonschema ruff mypy build twine setuptools
+          git ls-files -z | tar --null -T - -cf /tmp/oc-export/source.tar
+          python -m pip download --only-binary=:all: --dest /tmp/oc-export/wheels pytest pytest-cov hypothesis jsonschema ruff mypy build twine setuptools z3-solver
           git rev-parse HEAD > /tmp/oc-export/commit.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
