@@ -1,0 +1,66 @@
+{
+  "creator": "OpenConstraint hand-written conformance fixture (not a Yosys run)",
+  "modules": {
+    "top": {
+      "ports": {
+        "a": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "enable": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "out": {
+          "direction": "output",
+          "bits": [
+            4
+          ]
+        }
+      },
+      "netnames": {
+        "a": {
+          "bits": [
+            2
+          ]
+        },
+        "enable": {
+          "bits": [
+            3
+          ]
+        },
+        "out": {
+          "bits": [
+            4
+          ]
+        }
+      },
+      "cells": {
+        "gate": {
+          "type": "$_AND_",
+          "parameters": {},
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [
+              2
+            ],
+            "B": [
+              3
+            ],
+            "Y": [
+              4
+            ]
+          }
+        }
+      }
+    }
+  }
+}

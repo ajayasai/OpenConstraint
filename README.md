@@ -64,6 +64,23 @@ openconstraint audit \
   --min-coverage 90
 ```
 
+## Replayable evidence beyond lint
+
+`openconstraint-prove analyze` produces structural path witnesses and vacuity
+certificates, with review-only repair proposals and independent replay. Clock
+reachability is reused within each mode rather than recomputed for every
+exception. Use `--fail-on inconclusive` to reject unresolved or resource-bounded
+analysis, including an untrusted mode with no modeled exceptions.
+
+The separate experimental `openconstraint-functional` command checks Boolean
+influence on flat Yosys JSON using optional Z3 or a built-in exhaustive backend.
+It emits concrete counterexamples, rejects contradictory assumptions, and
+supports cross-backend replay. **Boolean independence is not delay-aware timing
+false-path proof**, and this command never generates SDC exceptions.
+
+See [structural evidence](docs/proof-carrying-analysis.md) and
+[Boolean evidence, examples, and limits](docs/functional-analysis.md).
+
 ## What the beta checks
 
 - Malformed Tcl grouping or modeled-command grammar without evaluating the Tcl

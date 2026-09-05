@@ -829,25 +829,24 @@ def _target_nets(design: Design, targets: set[str]) -> set[str]:
 
 def _propagate_clock(design: Design, targets: set[str]) -> tuple[set[str], set[str]]:
     reached_nets = _target_nets(design, targets)
-    reached_pins: set[str] = {target for target in targets if target in design.pins}
-    queue: deque[str] = deque(reached_nets)
+    reached_pins: set[str] = set()
+    queue: deque[str] = deque(sorted(target for target in targets if target in design.pins))
+    for net in sorted(reached_nets):
+        queue.extend(sorted(design.loads.get(net, set())))
     while queue:
-        net = queue.popleft()
-        for pin_path in design.loads.get(net, set()):
-            if pin_path not in design.pins:
-                continue
-            reached_pins.add(pin_path)
-            pin = design.pins[pin_path]
-            instance = design.instances[pin.instance]
-            if instance.sequential:
-                continue
-            for output_path in design.combinational_arcs.get(pin_path, set()):
-                output = design.pins[output_path]
-                reached_pins.add(output_path)
-                if output.net is None or output.net in reached_nets:
-                    continue
+        pin_path = queue.popleft()
+        if pin_path in reached_pins or pin_path not in design.pins:
+            continue
+        reached_pins.add(pin_path)
+        pin = design.pins[pin_path]
+        if design.instances[pin.instance].sequential:
+            continue
+        for output_path in sorted(design.combinational_arcs.get(pin_path, set())):
+            output = design.pins[output_path]
+            reached_pins.add(output_path)
+            if output.net is not None and output.net not in reached_nets:
                 reached_nets.add(output.net)
-                queue.append(output.net)
+                queue.extend(sorted(design.loads.get(output.net, set())))
     return reached_nets, reached_pins
 
 

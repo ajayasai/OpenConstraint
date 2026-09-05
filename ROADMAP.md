@@ -42,6 +42,13 @@ never calls a structurally absent path *functionally false*.
 
 ## 0.5 — functional exception proof and counterexamples
 
+Implemented first evidence layer (experimental): explicit zero-delay Boolean
+influence on a fail-closed flat Yosys gate model, optional Z3, a separately
+implemented exhaustive backend, concrete counterexample checking, and
+cross-backend replay. See [the model boundary](docs/functional-analysis.md).
+This does **not** complete the timing/temporal goals below.
+
+
 - Extract bit-accurate combinational and bounded sequential cones from a
   synthesis-grade intermediate representation.
 - Add pluggable SAT/SMT and sequential-property backends with versioned solver

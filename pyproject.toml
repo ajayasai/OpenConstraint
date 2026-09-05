@@ -39,6 +39,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+formal = ["z3-solver>=5.1,<6"]
 dev = [
   "build==1.6.0",
   "hypothesis>=6.167.1",
@@ -56,6 +57,7 @@ fuzz = [
 [project.scripts]
 openconstraint = "openconstraint.cli:main"
 openconstraint-prove = "openconstraint.proof:main"
+openconstraint-functional = "openconstraint.functional:main"
 
 [project.urls]
 Homepage = "https://github.com/ajayasai/OpenConstraint"

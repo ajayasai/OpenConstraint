@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from openconstraint.engine import ModeInput, audit
+from openconstraint.model import Instance, Pin, Port
+from openconstraint.parsers.sdc import parse_sdc_text
 from openconstraint.proof import (
     ProofLimitError,
     ProofLimits,
@@ -135,6 +138,34 @@ set_false_path -from [get_clocks core] -to [get_ports result]
     assert witness[0]["name"] == "u_ff/Q"
 
 
+def test_clock_scope_seeds_direct_unconnected_pin_targets(tmp_path: Path, design_factory) -> None:
+    design = design_factory()
+    direct_pins = {
+        "CK": Pin("u_direct/CK", "u_direct", "CK", "input", None, is_clock=True),
+        "D": Pin("u_direct/D", "u_direct", "D", "input", "data", is_data=True),
+        "Q": Pin("u_direct/Q", "u_direct", "Q", "output", "direct_q"),
+    }
+    design.instances["u_direct"] = Instance("u_direct", "DFF", direct_pins, sequential=True)
+    design.pins.update({pin.path: pin for pin in direct_pins.values()})
+    design.ports["direct_q"] = Port("direct_q", "output", "direct_q")
+    design.nets.add("direct_q")
+    design.loads.setdefault("data", set()).add("u_direct/D")
+    design.drivers.setdefault("direct_q", set()).add("u_direct/Q")
+
+    sdc_path = tmp_path / "direct-pin.sdc"
+    sdc_path.write_text(
+        "create_clock -name core -period 10 [get_ports clk]\n"
+        "create_clock -name core -period 10 -add [get_pins u_direct/CK]\n"
+        "set_false_path -from [get_clocks core] -to [get_ports direct_q]\n",
+        encoding="utf-8",
+    )
+    result = audit(design, [ModeInput("default", [str(sdc_path)])])
+    pack = analyze_proofs(design, result)
+    proof = _proof(pack)
+    assert proof["status"] == ProofStatus.WITNESSED.value
+    assert proof["witness"][0]["name"] == "u_direct/Q"
+
+
 def test_selector_kinds_disambiguate_clock_and_port_name_collision(audit_factory, design_factory) -> None:
     sdc = r"""
 create_clock -name clk -period 10 [get_ports clk]
@@ -177,7 +208,7 @@ set_false_path -from [get_ports datta] -to [get_ports result]
     assert suggestions[0]["candidate"] == "data"
     input_action = next(item for item in actions if item["kind"] == "complete_input_delay_matrix")
     assert len(input_action["sdc_template"]) == 4
-    assert "-clock core" in input_action["sdc_template"][0]
+    assert "-clock [get_clocks" in input_action["sdc_template"][0]
     rendered = render_repair_sdc(plan)
     assert "REVIEW REQUIRED" in rendered
     assert "<MIN_RISE>" in rendered
@@ -252,11 +283,20 @@ def test_rendered_repair_sdc_comments_every_untrusted_line() -> None:
     assert "\nexec touch /tmp/not-allowed" not in rendered
 
 
-def test_repair_plan_adds_multicycle_hold_template(audit_factory, design_factory) -> None:
-    sdc = r"""
-create_clock -name core -period 10 [get_ports clk]
-set_multicycle_path 3 -setup -from [get_ports data] -to [get_ports result]
-"""
+@pytest.mark.parametrize(
+    "multicycle_command",
+    [
+        "set_multicycle_path 3 -setup -from [get_ports data] -to [get_ports result]",
+        "set_multicycle_path -setup -from [get_ports data] -to [get_ports result] 3",
+        "set_multicycle_path 3 -from [get_ports data] -to [get_ports result]",
+    ],
+)
+def test_repair_plan_replaces_multicycle_with_explicit_pair(
+    audit_factory,
+    design_factory,
+    multicycle_command: str,
+) -> None:
+    sdc = "create_clock -name core -period 10 [get_ports clk]\n" + multicycle_command
     design = design_factory()
     result = audit_factory(sdc)
     pack = analyze_proofs(design, result)
@@ -264,10 +304,40 @@ set_multicycle_path 3 -setup -from [get_ports data] -to [get_ports result]
     actions = plan["actions"]
     assert isinstance(actions, list)
     action = next(item for item in actions if item["kind"] == "pair_multicycle_hold")
-    assert action["sdc_template"]
-    assert "set_multicycle_path 2" in action["sdc_template"][0]
-    assert "-hold" in action["sdc_template"][0]
+    templates = action["sdc_template"]
+    assert isinstance(templates, list) and len(templates) == 2
+    document = parse_sdc_text("\n".join(templates), "<repair-test>")
+    assert not document.issues
+    assert len(document.commands) == 2
+    setup, hold = document.commands
+    assert not setup.parse_errors and not hold.parse_errors
+    assert setup.positionals == ["3"]
+    assert setup.has("-setup") and not setup.has("-hold")
+    assert hold.positionals == ["2"]
+    assert hold.has("-hold") and not hold.has("-setup")
+    assert "Replace the original command" in action["review"]
     assert any(item["kind"] == "remove_or_narrow_vacuous_exception" for item in actions)
+
+
+def test_repair_templates_quote_clock_names(audit_factory, design_factory) -> None:
+    sdc = r"""
+create_clock -name {core clock} -period 10 [get_ports clk]
+create_clock -name {broken clock} [get_ports clk2]
+"""
+    design = design_factory()
+    result = audit_factory(sdc)
+    pack = analyze_proofs(design, result)
+    plan = build_repair_plan(design, result, pack)
+    actions = plan["actions"]
+    assert isinstance(actions, list)
+    input_action = next(item for item in actions if item["kind"] == "complete_input_delay_matrix")
+    assert "-clock [get_clocks" in input_action["sdc_template"][0]
+    clock_action = next(
+        item
+        for item in actions
+        if item["kind"] == "repair_clock_period" and item["source"]["message"].startswith("Clock 'broken clock'")
+    )
+    assert 'create_clock -name "broken clock" -period <PERIOD>' in clock_action["sdc_template"][0]
 
 
 def test_clock_period_and_unconstrained_endpoint_repairs(audit_factory, design_factory) -> None:

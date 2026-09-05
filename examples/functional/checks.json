@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "model": "zero_delay_arbitrary_state",
+  "top": "top",
+  "checks": [
+    {
+      "id": "disabled-mode",
+      "sources": [
+        "a"
+      ],
+      "targets": [
+        "out"
+      ],
+      "assumptions": [
+        {
+          "signal": "enable",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "id": "enabled-mode",
+      "sources": [
+        "a"
+      ],
+      "targets": [
+        "out"
+      ],
+      "assumptions": [
+        {
+          "signal": "enable",
+          "value": 1
+        }
+      ]
+    }
+  ]
+}

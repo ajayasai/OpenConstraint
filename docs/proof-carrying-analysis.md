@@ -115,13 +115,25 @@ invalid inputs or operational errors.
 
 ## CI gates and resource bounds
 
-By default, proof findings do not fail a job. A project may opt into one gate:
+By default, proof findings do not fail a job. A project may select a single-status or compound gate:
 
 ```console
 openconstraint-prove analyze ... --fail-on vacuous
 openconstraint-prove analyze ... --fail-on unresolved
 openconstraint-prove analyze ... --fail-on bounded
+openconstraint-prove analyze ... --fail-on inconclusive
+openconstraint-prove analyze ... --fail-on any
 ```
+
+`inconclusive` fails on unresolved or bounded results. `any` also fails on
+vacuous results. Gates involving unresolved results reject an untrusted mode
+even when it contains no modeled exceptions. `never` remains the default.
+A structural witness is not functional validation or timing signoff.
+
+Clock reachability is computed lazily once per referenced clock per mode, and
+reused within that analysis. It is never reused across modes or analysis calls.
+Direct pin clock targets are seeded even when they have no connected net;
+combinational pin targets use the same propagation implementation as the audit.
 
 Resource limits are explicit and deterministic:
 
@@ -143,15 +155,28 @@ The repair planner never modifies an SDC file automatically. It can:
 - suggest similar names for unmatched object queries;
 - emit complete min/max by rise/fall I/O-delay templates;
 - emit a clock-period template while refusing to guess a period;
-- propose the common multicycle setup `N` / hold `N-1` companion for review;
+- propose an explicit replacement setup `N` / hold `N-1` pair for review;
 - identify structurally vacuous exceptions for removal or narrowing;
 - group overlap and unconstrained-endpoint remediation work.
 
-Every line in `openconstraint-repair.sdc` is prefixed with `# PROPOSED:`. The generated file is therefore inert even when a source diagnostic or exception contains multiple lines; a timing owner must review and deliberately uncomment a command before it can affect a flow.
+Every physical line in `openconstraint-repair.sdc` is commented, including metadata; every template line is prefixed with `# PROPOSED:`. The generated file is therefore inert even when a source diagnostic or exception contains multiple lines; a timing owner must review and deliberately uncomment a command before it can affect a flow.
 
 Every numeric timing value that cannot be proven from the inputs remains an
 angle-bracket placeholder. The JSON safety contract publishes both the placeholder regular expression and the exact sorted token set used by that plan, so consumers can reject partially substituted templates deterministically. Similar-name and multicycle suggestions are evidence,
 not designer intent, and require review by a timing owner.
+
+Multicycle proposals locate the parsed positional multiplier even after options,
+preserve option operands and ordered through scopes, and explicitly replace the
+original command rather than appending an implicit hold relationship. Commands
+using `-reset_path` receive review guidance but no generated pair, because their
+history effects require additional analysis. The usual N/N-1 relationship is
+still a heuristic, not a proof of cross-clock intent.
+
+Concrete clock names and collections are Tcl-quoted; a collection is one
+pattern-list argument, not multiple positional words. Names that cannot be
+represented without changing the exact matching contract produce explicit
+placeholders instead of widening the scope. Reparse and re-audit populated
+proposals before accepting them.
 
 ## Machine-readable contracts
 

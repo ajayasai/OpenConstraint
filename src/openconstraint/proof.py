@@ -21,10 +21,18 @@ from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 
-from openconstraint.engine import AuditOptions, ModeInput, audit
+from openconstraint.engine import AuditOptions, ModeInput, _propagate_clock, audit
 from openconstraint.model import AuditResult, Design, Diagnostic, ExceptionPath, ModeResult
+from openconstraint.opensta import tcl_quote
 from openconstraint.parsers.liberty import CellLibrary, parse_liberty
-from openconstraint.parsers.sdc import ParsedCommand, parse_sdc_text
+from openconstraint.parsers.sdc import (
+    _COMMAND_GRAMMARS,
+    ParsedCommand,
+    _canonical_modeled_option,
+    _is_keyword,
+    parse_sdc_text,
+)
+from openconstraint.parsers.tcl import TclSyntaxError, decode_tcl_word
 from openconstraint.parsers.verilog import elaborate, parse_verilog
 from openconstraint.version import __version__
 
@@ -221,30 +229,19 @@ def _target_nets(design: Design, targets: Iterable[str]) -> set[str]:
     return nets
 
 
-def _clocked_instances(design: Design, mode: ModeResult, clock_name: str) -> set[str]:
+def _clocked_instances(
+    design: Design, mode: ModeResult, clock_name: str, clock_cache: dict[str, frozenset[str]] | None = None
+) -> frozenset[str]:
+    if clock_cache is not None and clock_name in clock_cache:
+        return clock_cache[clock_name]
     clock = mode.clocks.get(clock_name)
     if clock is None or clock_name not in mode.valid_clocks:
-        return set()
-    reached_nets = _target_nets(design, clock.targets)
-    queue: deque[str] = deque(sorted(reached_nets))
-    reached_pins: set[str] = set()
-    while queue:
-        net = queue.popleft()
-        for pin_path in sorted(design.loads.get(net, set())):
-            pin = design.pins.get(pin_path)
-            if pin is None or pin_path in reached_pins:
-                continue
-            reached_pins.add(pin_path)
-            instance = design.instances[pin.instance]
-            if instance.sequential:
-                continue
-            for output_path in sorted(design.combinational_arcs.get(pin_path, set())):
-                output = design.pins[output_path]
-                reached_pins.add(output_path)
-                if output.net is not None and output.net not in reached_nets:
-                    reached_nets.add(output.net)
-                    queue.append(output.net)
-    return {design.pins[pin_path].instance for pin_path in reached_pins & design.sequential_clock_pins}
+        return frozenset()
+    _nets, reached_pins = _propagate_clock(design, clock.targets)
+    instances = frozenset(design.pins[pin_path].instance for pin_path in reached_pins & design.sequential_clock_pins)
+    if clock_cache is not None:
+        clock_cache[clock_name] = instances
+    return instances
 
 
 def _instance_nodes(design: Design, instance_name: str, role: str) -> set[GraphNode]:
@@ -264,8 +261,10 @@ def _instance_nodes(design: Design, instance_name: str, role: str) -> set[GraphN
     return {GraphNode("pin", pin.path) for pin in selected}
 
 
-def _clock_nodes(design: Design, mode: ModeResult, clock_name: str, role: str) -> set[GraphNode]:
-    instances = _clocked_instances(design, mode, clock_name)
+def _clock_nodes(
+    design: Design, mode: ModeResult, clock_name: str, role: str, clock_cache: dict[str, frozenset[str]] | None = None
+) -> set[GraphNode]:
+    instances = _clocked_instances(design, mode, clock_name, clock_cache)
     expanded: set[GraphNode] = set()
     if role == "source":
         for instance_name in instances:
@@ -342,6 +341,7 @@ def _nodes_for_selector_kind(
     name: str,
     role: str,
     selector_kind: str,
+    clock_cache: dict[str, frozenset[str]] | None = None,
 ) -> set[GraphNode]:
     if selector_kind in {"ports", "all_inputs", "all_outputs"}:
         return {GraphNode("port", name)} if name in design.ports else set()
@@ -352,7 +352,7 @@ def _nodes_for_selector_kind(
     if selector_kind in {"cells", "registers"}:
         return _instance_nodes(design, name, role) if name in design.instances else set()
     if selector_kind in {"clocks", "all_clocks"}:
-        return _clock_nodes(design, mode, name, role) if name in mode.clocks else set()
+        return _clock_nodes(design, mode, name, role, clock_cache) if name in mode.clocks else set()
     return set()
 
 
@@ -361,6 +361,7 @@ def _literal_nodes(
     mode: ModeResult,
     name: str,
     role: str,
+    clock_cache: dict[str, frozenset[str]] | None = None,
 ) -> tuple[set[GraphNode], bool]:
     candidates: list[set[GraphNode]] = []
     if name in design.ports:
@@ -372,7 +373,7 @@ def _literal_nodes(
     if role == "through" and name in design.nets:
         candidates.append({GraphNode("net", name)})
     if role != "through" and name in mode.clocks:
-        candidates.append(_clock_nodes(design, mode, name, role))
+        candidates.append(_clock_nodes(design, mode, name, role, clock_cache))
     if len(candidates) > 1:
         return set(), True
     return (candidates[0], False) if candidates else (set(), False)
@@ -384,19 +385,20 @@ def _expand_objects(
     objects: Iterable[str],
     role: str,
     selector_kind: str | None,
+    clock_cache: dict[str, frozenset[str]] | None = None,
 ) -> tuple[set[GraphNode], set[str]]:
     expanded: set[GraphNode] = set()
     ambiguous: set[str] = set()
     for name in objects:
         if selector_kind == "literal":
-            nodes, collision = _literal_nodes(design, mode, name, role)
+            nodes, collision = _literal_nodes(design, mode, name, role, clock_cache)
             expanded.update(nodes)
             if collision:
                 ambiguous.add(name)
         elif selector_kind is None:
             ambiguous.add(name)
         else:
-            expanded.update(_nodes_for_selector_kind(design, mode, name, role, selector_kind))
+            expanded.update(_nodes_for_selector_kind(design, mode, name, role, selector_kind, clock_cache))
     return expanded, ambiguous
 
 
@@ -572,6 +574,7 @@ def _proof_for_exception(
     exception: ExceptionPath,
     index: int,
     limits: ProofLimits,
+    clock_cache: dict[str, frozenset[str]] | None = None,
 ) -> dict[str, object]:
     scope_kinds = _exception_scope_kinds(exception)
     payload = _exception_payload(exception, scope_kinds)
@@ -631,6 +634,7 @@ def _proof_for_exception(
                 exception.from_objects,
                 "source",
                 scope_kinds.from_kind,
+                clock_cache,
             )
         else:
             sources, source_ambiguities = _default_sources(design), set()
@@ -641,11 +645,12 @@ def _proof_for_exception(
                 exception.to_objects,
                 "target",
                 scope_kinds.to_kind,
+                clock_cache,
             )
         else:
             targets, target_ambiguities = _default_targets(design), set()
         through_expansions = [
-            _expand_objects(design, mode, group, "through", selector_kind)
+            _expand_objects(design, mode, group, "through", selector_kind, clock_cache)
             for group, selector_kind in zip(
                 exception.through_objects,
                 scope_kinds.through_kinds,
@@ -721,8 +726,9 @@ def analyze_proofs(
     modes: list[dict[str, object]] = []
     overall = Counter[str]()
     for mode in result.modes:
+        clock_cache: dict[str, frozenset[str]] = {}
         proofs = [
-            _proof_for_exception(design, mode, graph, exception, index, selected_limits)
+            _proof_for_exception(design, mode, graph, exception, index, selected_limits, clock_cache)
             for index, exception in enumerate(mode.exceptions)
         ]
         counts = Counter(str(item["status"]) for item in proofs)
@@ -787,20 +793,108 @@ def _suggest_names(pattern: str, universe: Iterable[str]) -> list[dict[str, obje
     return [{"candidate": candidate, "similarity": round(score, 4)} for score, candidate in scored[:3] if score >= 0.55]
 
 
+def _tcl_word_or_placeholder(value: object, placeholder: str) -> str:
+    if not isinstance(value, str):
+        return placeholder
+    try:
+        return tcl_quote(value)
+    except ValueError:
+        return placeholder
+
+
 def _sdc_collection(design: Design, names: Sequence[str]) -> str:
-    """Render an exact homogeneous SDC collection without changing intent."""
+    """Render an exact homogeneous SDC collection with substitution-safe Tcl words."""
 
     if not names:
         return "<OBJECT_COLLECTION>"
+    command: str | None = None
     if all(name in design.ports for name in names):
-        return f"[get_ports {{{' '.join(names)}}}]"
-    if all(name in design.pins for name in names):
-        return f"[get_pins {{{' '.join(names)}}}]"
-    if all(name in design.nets for name in names):
-        return f"[get_nets {{{' '.join(names)}}}]"
-    if all(name in design.instances for name in names):
-        return f"[get_cells {{{' '.join(names)}}}]"
-    return "<OBJECT_COLLECTION>"
+        command = "get_ports"
+    elif all(name in design.pins for name in names):
+        command = "get_pins"
+    elif all(name in design.nets for name in names):
+        command = "get_nets"
+    elif all(name in design.instances for name in names):
+        command = "get_cells"
+    if command is None:
+        return "<OBJECT_COLLECTION>"
+    pattern_list = _exact_pattern_list(names)
+    if pattern_list is None:
+        return "<OBJECT_COLLECTION>"
+    return f"[{command} {pattern_list}]"
+
+
+def _exact_pattern_list(names: Sequence[str]) -> str | None:
+    # One Tcl argument containing a list. Wildcards and unrepresentable
+    # OpenSTA list spellings require review rather than silently broadening.
+    if any(
+        not name or name.startswith("-") or any(c in name for c in '*?"{}\\') or any(ord(c) < 32 for c in name)
+        for name in names
+    ):
+        return None
+    return tcl_quote(" ".join('"' + name + '"' for name in names))
+
+
+def _multicycle_pair_templates(exception: ExceptionPath, expected_hold: int) -> list[str]:
+    document = parse_sdc_text(exception.raw, "<repair-multicycle>")
+    if document.issues or len(document.commands) != 1:
+        return []
+    command = document.commands[0]
+    if command.parse_errors or command.name != "set_multicycle_path" or len(command.positionals) != 1:
+        return []
+    setup_multiplier = exception.qualifiers.get("multiplier")
+    if type(setup_multiplier) is not int or setup_multiplier < 2 or command.has("-reset_path"):
+        return []
+
+    words = list(command.tcl.words)
+    positional_indices: list[int] = []
+    phase_indices: set[int] = set()
+    index = 1
+    while index < len(words):
+        try:
+            decoded = decode_tcl_word(words[index])
+        except TclSyntaxError:
+            return []
+        option = (
+            _canonical_modeled_option(decoded, _COMMAND_GRAMMARS["set_multicycle_path"])
+            if _is_keyword(decoded)
+            else None
+        )
+        if option is None:
+            positional_indices.append(index)
+            index += 1
+            continue
+        canonical, arity = option
+        if canonical in {"-setup", "-hold"}:
+            phase_indices.add(index)
+        if arity == "value":
+            index += 2
+        else:
+            index += 1
+
+    if len(positional_indices) != 1:
+        return []
+    multiplier_index = positional_indices[0]
+    try:
+        if decode_tcl_word(words[multiplier_index]) != command.positionals[0]:
+            return []
+    except TclSyntaxError:
+        return []
+
+    def render(multiplier: int, phase: str) -> str:
+        rendered: list[str] = []
+        for word_index, word in enumerate(words):
+            if word_index in phase_indices:
+                continue
+            rendered.append(str(multiplier) if word_index == multiplier_index else word)
+        rendered.insert(1, phase)
+        return " ".join(rendered)
+
+    templates = [render(setup_multiplier, "-setup"), render(expected_hold, "-hold")]
+    checked = parse_sdc_text("\n".join(templates), "<repair-roundtrip>")
+    if checked.issues or len(checked.commands) != 2 or any(item.parse_errors for item in checked.commands):
+        return []
+    return templates
 
 
 def _action_id(payload: Mapping[str, object]) -> str:
@@ -872,13 +966,15 @@ def _diagnostic_action(
         ports = sorted(str(item) for item in ports_value) if isinstance(ports_value, list) else []
         clock_reference = "<CLOCK>"
         if mode is not None and len(mode.valid_clocks) == 1:
-            clock_reference = next(iter(mode.valid_clocks))
-        collection = " ".join(ports)
+            clock_patterns = _exact_pattern_list([next(iter(mode.valid_clocks))])
+            if clock_patterns is not None:
+                clock_reference = f"[get_clocks {clock_patterns}]"
+        collection = _sdc_collection(design, ports).replace("<OBJECT_COLLECTION>", "<PORT_COLLECTION>")
         templates = [
-            f"set_{direction}_delay <MIN_RISE> -min -rise -clock {clock_reference} [get_ports {{{collection}}}]",
-            f"set_{direction}_delay <MIN_FALL> -min -fall -clock {clock_reference} [get_ports {{{collection}}}]",
-            f"set_{direction}_delay <MAX_RISE> -max -rise -clock {clock_reference} [get_ports {{{collection}}}]",
-            f"set_{direction}_delay <MAX_FALL> -max -fall -clock {clock_reference} [get_ports {{{collection}}}]",
+            f"set_{direction}_delay <MIN_RISE> -min -rise -clock {clock_reference} {collection}",
+            f"set_{direction}_delay <MIN_FALL> -min -fall -clock {clock_reference} {collection}",
+            f"set_{direction}_delay <MAX_RISE> -max -rise -clock {clock_reference} {collection}",
+            f"set_{direction}_delay <MAX_FALL> -max -fall -clock {clock_reference} {collection}",
         ]
         return _action(
             mode=diagnostic.mode,
@@ -910,6 +1006,7 @@ def _diagnostic_action(
             )
         targets = sorted(clock_spec.targets) if clock_spec is not None else []
         target = _sdc_collection(design, targets).replace("<OBJECT_COLLECTION>", "<CLOCK_TARGET>")
+        clock_word = _tcl_word_or_placeholder(clock_name, "<CLOCK_NAME>")
         return _action(
             mode=diagnostic.mode,
             kind="repair_clock_period",
@@ -918,7 +1015,7 @@ def _diagnostic_action(
             rationale=diagnostic.rationale,
             source=source,
             review="Obtain the period and waveform from the architecture or interface specification; they cannot be inferred safely from connectivity.",
-            sdc_template=[f"create_clock -name {clock_name} -period <PERIOD> {target}"],
+            sdc_template=[f"create_clock -name {clock_word} -period <PERIOD> {target}"],
         )
 
     if diagnostic.rule_id == "OC2101":
@@ -943,32 +1040,18 @@ def _diagnostic_action(
             ),
             None,
         )
-        template: list[str] = []
-        if matching is not None and isinstance(expected, int):
-            raw = matching.raw.strip()
-            candidate = re.sub(
-                r"^(\s*set_multicycle_path\s+)\S+",
-                rf"\g<1>{expected}",
-                raw,
-                count=1,
-            )
-            if "-setup" in candidate and "-hold" in candidate:
-                candidate = candidate.replace("-setup", "", 1)
-                candidate = re.sub(r"\s+", " ", candidate).strip()
-            elif "-setup" in candidate:
-                candidate = candidate.replace("-setup", "-hold", 1)
-            elif "-hold" not in candidate:
-                candidate += " -hold"
-            template.append(candidate)
+        templates = (
+            _multicycle_pair_templates(matching, expected) if matching is not None and isinstance(expected, int) else []
+        )
         return _action(
             mode=diagnostic.mode,
             kind="pair_multicycle_hold",
             confidence="medium",
-            title="Review and add the usual N/N-1 hold counterpart",
+            title="Replace the multicycle command with an explicit setup/hold pair",
             rationale=diagnostic.rationale,
             source=source,
-            review="The N/N-1 pairing is common, not universal. Confirm launch/capture edge intent before adding the generated command.",
-            sdc_template=template,
+            review="Replace the original command with the reviewed pair rather than appending it. The N/N-1 convention is common, not universal; confirm launch/capture edge intent first. Empty templates require manual review, including -reset_path history.",
+            sdc_template=templates,
         )
 
     if diagnostic.rule_id == "OC1002":
@@ -1188,10 +1271,16 @@ def render_proof_text(pack: Mapping[str, object]) -> str:
 
 
 def render_repair_sdc(plan: Mapping[str, object]) -> str:
+    """Render every physical line, including untrusted metadata, as a comment."""
+
+    def comment(prefix: str, value: object) -> list[str]:
+        normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+        return [prefix + line for line in normalized.split("\n")]
+
     lines = [
         "# OpenConstraint deterministic repair plan",
         "# REVIEW REQUIRED: placeholders and all proposed edits must be approved by a timing owner.",
-        f"# Plan digest: {plan.get('plan_digest')}",
+        *comment("# Plan digest: ", plan.get("plan_digest")),
         "",
     ]
     actions = plan.get("actions", [])
@@ -1202,12 +1291,10 @@ def render_repair_sdc(plan: Mapping[str, object]) -> str:
             templates = action.get("sdc_template", [])
             if not isinstance(templates, list) or not templates:
                 continue
-            lines.append(f"# {action.get('id')} [{action.get('confidence')}] {action.get('title')}")
-            lines.append(f"# Review: {action.get('review')}")
+            lines.extend(comment("# ", f"{action.get('id')} [{action.get('confidence')}] {action.get('title')}"))
+            lines.extend(comment("# Review: ", action.get("review")))
             for template in templates:
-                normalized = str(template).replace("\r\n", "\n").replace("\r", "\n")
-                for proposal_line in normalized.split("\n"):
-                    lines.append(f"# PROPOSED: {proposal_line}")
+                lines.extend(comment("# PROPOSED: ", template))
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1399,7 +1486,7 @@ def _parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--output", default="openconstraint-proof")
     analyze_parser.add_argument(
         "--fail-on",
-        choices=("never", "vacuous", "unresolved", "bounded"),
+        choices=("never", "vacuous", "unresolved", "bounded", "inconclusive", "any"),
         default="never",
     )
 
@@ -1434,15 +1521,24 @@ def _run_analysis(arguments: argparse.Namespace) -> tuple[Design, AuditResult, d
 def _gate(pack: Mapping[str, object], fail_on: str) -> int:
     if fail_on == "never":
         return 0
+    if fail_on not in {"vacuous", "unresolved", "bounded", "inconclusive", "any"}:
+        raise ValueError("unknown proof gate")
     summary = pack.get("summary", {})
     counts = summary if isinstance(summary, dict) else {}
-    selected = {
-        "vacuous": ProofStatus.VACUOUS.value,
-        "unresolved": ProofStatus.UNRESOLVED.value,
-        "bounded": ProofStatus.BOUNDED.value,
-    }[fail_on]
-    count = counts.get(selected)
-    return int(isinstance(count, int) and count > 0)
+    selected = {fail_on}
+    if fail_on == "inconclusive":
+        selected = {"unresolved", "bounded"}
+    elif fail_on == "any":
+        selected = {"vacuous", "unresolved", "bounded"}
+    if "unresolved" in selected:
+        modes = pack.get("modes")
+        if (
+            not isinstance(modes, list)
+            or not modes
+            or any(not isinstance(mode, dict) or mode.get("trusted_model") is not True for mode in modes)
+        ):
+            return 1
+    return int(any(isinstance(counts.get(status), int) and counts[status] > 0 for status in selected))
 
 
 def _schema_text(kind: str) -> str:
