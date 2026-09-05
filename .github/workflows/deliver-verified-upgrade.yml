@@ -37,8 +37,10 @@ jobs:
           encoded = ''.join(Path(f'.oc-delivery/{i:02d}.b64').read_text().strip() for i in range(4))
           patch = lzma.decompress(base64.b64decode(encoded, validate=True))
           assert hashlib.sha256(patch).hexdigest() == '55967ca4ffe3a072b47ec1e4df21543cb3c709f807159d730336a9d87cb7be52'
-          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
-          subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+          # The workflow was already authored by the authorized repository connector.
+          # Keep it unchanged; the runner token only delivers product source.
+          subprocess.run(['git', 'apply', '--check', '--exclude=.github/workflows/functional.yml', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '--exclude=.github/workflows/functional.yml', '-'], input=patch, check=True)
           for path in (
               '.github/final-proof-review-fixes.ready',
               '.github/scripts/apply_final_proof_review_fixes.py',
