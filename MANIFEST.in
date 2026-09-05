@@ -3,3 +3,6 @@ recursive-include src/openconstraint/schemas *.json
 recursive-include src/openconstraint/demo *.v *.lib *.sdc
 recursive-include fuzz *.py *.md *.dict *.sdc *.v *.lib
 recursive-include benchmarks *.json *.md *.sdc
+recursive-include examples/functional *.json *.v *.md
+
+recursive-include examples/sequential *.v *.json *.md *.py

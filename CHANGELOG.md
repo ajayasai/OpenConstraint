@@ -7,7 +7,33 @@ compatibility caveats documented in [GOVERNANCE.md](GOVERNANCE.md).
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- Replayable structural exception witnesses/vacuity analysis and inert,
+  review-only repair plans through `openconstraint-prove`.
+- Experimental Boolean source-to-target influence analysis on flat Yosys JSON,
+  optional Z3, exhaustive cross-checking, independently evaluated counterexamples,
+  strict schemas, provenance digests, and `openconstraint-functional` CLI.
+- Dedicated CI synthesis of a real RTL example and cross-backend verification.
+- Compound `inconclusive` and `any` structural proof gates; an untrusted mode
+  cannot pass these gates merely because it contains no modeled exceptions.
+
+### Fixed
+
+- Direct unconnected clock-pin targets and direct combinational clock-pin
+  propagation, sharing the audit implementation with structural proofs.
+- Repeated clock reachability work, now memoized per mode within each proof run.
+- Multicycle repair operand placement, implicit setup/hold replacement, quoted
+  option operands, and conservative handling of `-reset_path` history.
+- Exact multi-object Tcl collection templates, clock names containing spaces,
+  and physical-line commenting of all untrusted repair metadata.
+
+### Scope
+
+- The Boolean backend models zero-delay logic and arbitrary DFF Q state, not
+  delay-sensitive path sensitization, sequential proof, or timing signoff.
+  Unsupported logic, contradictory assumptions, and resource limits never
+  become successful independence decisions.
 
 ## [0.3.0-beta] - 2026-09-01
 

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-repair.schema.json",
+  "title": "OpenConstraint repair plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "proof_pack_digest",
+    "safety",
+    "summary",
+    "actions",
+    "plan_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "OpenConstraint"},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "proof_pack_digest": {"$ref": "#/$defs/sha256"},
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automatic_changes", "placeholder_pattern", "placeholder_tokens", "statement"],
+      "properties": {
+        "automatic_changes": {"const": false},
+        "placeholder_pattern": {"const": "<[A-Z][A-Z0-9_]*>"},
+        "placeholder_tokens": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^<[A-Z][A-Z0-9_]*>$"}
+        },
+        "statement": {"type": "string"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_count", "by_confidence", "by_kind"],
+      "properties": {
+        "action_count": {"type": "integer", "minimum": 0},
+        "by_confidence": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "by_kind": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}},
+    "plan_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "mode",
+        "kind",
+        "confidence",
+        "automatic",
+        "title",
+        "rationale",
+        "source",
+        "review",
+        "sdc_template"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^OCRP-[0-9A-F]{16}$"},
+        "mode": {"type": "string"},
+        "kind": {"type": "string"},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "automatic": {"const": false},
+        "title": {"type": "string"},
+        "rationale": {"type": "string"},
+        "source": {"type": "object"},
+        "review": {"type": "string"},
+        "sdc_template": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-sequential-spec.schema.json",
+  "title": "OpenConstraint synchronous safety spec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "model": {"const": "single_clock_synchronous_v1"},
+    "top": {"type": "string", "minLength": 1},
+    "clock": {"$ref": "#/$defs/signal"},
+    "edge": {"enum": ["posedge", "negedge"]},
+    "initial": {"type": "array", "items": {"$ref": "#/$defs/assignment"}},
+    "assumptions": {"type": "array", "items": {"$ref": "#/$defs/assignment"}},
+    "prefix": {
+      "type": "array",
+      "items": {"type": "array", "items": {"$ref": "#/$defs/assignment"}},
+      "maxItems": 256
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 200},
+              "binding": {"$ref": "#/$defs/binding"},
+              "kind": {"const": "forbid"},
+              "forbid": {"type": "array", "items": {"$ref": "#/$defs/assignment"}, "minItems": 1}
+            },
+            "required": ["id", "kind", "forbid"]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 200},
+              "binding": {"$ref": "#/$defs/binding"},
+              "kind": {"const": "min_spacing"},
+              "event": {"$ref": "#/$defs/signal"},
+              "cycles": {"type": "integer", "minimum": 2, "maximum": 257}
+            },
+            "required": ["id", "kind", "event", "cycles"]
+          }
+        ]
+      },
+      "minItems": 1
+    }
+  },
+  "required": ["schema_version", "model", "top", "clock", "edge", "checks"],
+  "$defs": {
+    "signal": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "net": {"type": "string", "minLength": 1},
+            "bit": {"type": "integer", "minimum": 0}
+          },
+          "required": ["net", "bit"]
+        }
+      ]
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signal": {"$ref": "#/$defs/signal"},
+        "value": {"type": "integer", "enum": [0, 1]}
+      },
+      "required": ["signal", "value"]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 200},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "command_index": {"type": "integer", "minimum": 0}
+      },
+      "required": ["source", "sha256", "command_index"]
+    }
+  }
+}

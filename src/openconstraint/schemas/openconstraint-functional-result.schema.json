@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-functional-result.schema.json",
+  "title": "OpenConstraint Boolean influence result (not timing signoff)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "algorithm",
+    "model",
+    "timing_signoff",
+    "netlist_digest",
+    "specification_digest",
+    "backend",
+    "limits",
+    "summary",
+    "checks",
+    "report_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "OpenConstraint"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "algorithm": {
+      "const": "boolean-influence-v1"
+    },
+    "model": {
+      "const": "zero_delay_arbitrary_state"
+    },
+    "timing_signoff": {
+      "const": false
+    },
+    "netlist_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "specification_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "z3",
+            "enumerate"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_gates",
+        "max_bits",
+        "max_checks",
+        "max_enum_inputs",
+        "max_enum_work",
+        "max_total_gate_work",
+        "solver_timeout_ms",
+        "solver_rlimit"
+      ],
+      "properties": {
+        "max_gates": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bits": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_checks": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_enum_inputs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "max_enum_work": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_total_gate_work": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "solver_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "solver_rlimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "independent",
+          "dependent",
+          "bounded",
+          "unsupported",
+          "inconsistent_assumptions"
+        ]
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "report_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "query_digest",
+        "cone_gates",
+        "cone_inputs",
+        "status",
+        "reason",
+        "counterexample"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "query_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "cone_gates": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cone_inputs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "independent",
+            "dependent",
+            "bounded",
+            "unsupported",
+            "inconsistent_assumptions"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "counterexample": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/counterexample"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "dependent"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "counterexample": {
+                "$ref": "#/$defs/counterexample"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "counterexample": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "world": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputs",
+        "targets"
+      ],
+      "properties": {
+        "inputs": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          }
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "enum": [
+              0,
+              1
+            ]
+          }
+        }
+      }
+    },
+    "counterexample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "left",
+        "right"
+      ],
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/world"
+        },
+        "right": {
+          "$ref": "#/$defs/world"
+        }
+      }
+    }
+  }
+}
