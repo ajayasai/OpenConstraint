@@ -59,6 +59,7 @@ openconstraint = "openconstraint.cli:main"
 openconstraint-prove = "openconstraint.proof:main"
 openconstraint-functional = "openconstraint.functional:main"
 openconstraint-sequential = "openconstraint.sequential_cli:main"
+openconstraint-expand = "openconstraint.expand:main"
 
 [project.urls]
 Homepage = "https://github.com/ajayasai/OpenConstraint"
