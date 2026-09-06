@@ -5,6 +5,8 @@ from __future__ import annotations
 import random
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +16,31 @@ from openconstraint.parsers.sdc import MODELED_SDC_COMMANDS, QUERY_KINDS
 
 TCLSH = shutil.which("tclsh")
 pytestmark = pytest.mark.skipif(TCLSH is None, reason="separate native Tcl differential oracle not installed")
+
+
+def native_tcl(harness: str) -> str:
+    """Run only owned fixtures from a real script, not Tcl's interactive stdin.
+
+    Some system Tcl launchers cannot consume a subprocess stdin pipe. A file
+    also makes script errors non-interactive. Require a completion marker so
+    a launcher that exits zero without evaluating the script cannot be an oracle.
+    """
+    assert TCLSH is not None
+    completion = "__OPENCONSTRAINT_NATIVE_TCL_COMPLETED__\n"
+    with tempfile.TemporaryDirectory(prefix="oc-tcl-oracle-") as directory:
+        path = Path(directory) / "reference.tcl"
+        path.write_text(harness + "\nputs {" + completion.rstrip("\n") + "}\n", encoding="utf-8")
+        proc = subprocess.run(
+            [TCLSH, str(path)],
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+    assert proc.stdout.endswith(completion), f"native Tcl did not complete: {proc.stderr}"
+    return proc.stdout[: -len(completion)]
 
 
 def native_capture(script: str) -> list[list[str]]:
@@ -27,17 +54,20 @@ proc query {name args} {return [list QUERY [list $name {*}$args]]}
     for name in sorted(set(QUERY_KINDS) | {"get_clock", "get_pin", "get_port", "get_cell", "get_net"}):
         harness += f"interp alias {{}} {name} {{}} query {name}\n"
     harness += f"""
-set code [encoding convertfrom utf-8 [binary decode hex {script.encode().hex()}]]
+set code [encoding convertfrom utf-8 [binary format H* {script.encode().hex()}]]
 set status [catch {{eval $code}} message]
 if {{$status != 0 && $status != 2}} {{puts stderr $message; exit 2}}
 foreach row $captured {{
  set fields {{}}
- foreach word $row {{lappend fields [binary encode hex [encoding convertto utf-8 $word]]}}
+ foreach word $row {{
+  binary scan [encoding convertto utf-8 $word] H* encoded
+  lappend fields $encoded
+ }}
  puts [join $fields |]
 }}
 """
-    proc = subprocess.run([TCLSH], input=harness, text=True, capture_output=True, timeout=5, check=True)
-    return [[bytes.fromhex(w).decode() for w in row.split("|")] for row in proc.stdout.splitlines()]
+    stdout = native_tcl(harness)
+    return [[bytes.fromhex(w).decode() for w in row.split("|")] for row in stdout.splitlines()]
 
 
 PROGRAMS = [
@@ -114,9 +144,9 @@ EXPRESSIONS = [
 def test_native_expression_results(expression):
     # Each expression is a static repository-owned test case; never run user input.
     harness = f"puts [expr {{{expression}}}]\n"
-    result = subprocess.run([TCLSH], input=harness, text=True, capture_output=True, timeout=5, check=True)
+    stdout = native_tcl(harness)
     actual = Expression(expression, lambda name: (_ for _ in ()).throw(ValueError(name))).result()
-    assert actual == result.stdout.rstrip("\n")
+    assert actual == stdout.rstrip("\n")
 
 
 @pytest.mark.parametrize("seed", range(30))
