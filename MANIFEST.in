@@ -6,3 +6,4 @@ recursive-include benchmarks *.json *.md *.sdc
 recursive-include examples/functional *.json *.v *.md
 
 recursive-include examples/sequential *.v *.json *.md *.py
+recursive-include examples/expansion *.sdc *.md
