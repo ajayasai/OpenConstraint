@@ -10,6 +10,7 @@ is functionally valid.
 
 - [Getting started](getting-started.md)
 - [CLI reference](cli.md)
+- [Bounded parameterized Tcl/SDC expansion](sdc-expansion.md)
 - [Proof-carrying structural exception analysis](proof-carrying-analysis.md)
 - [Experimental Boolean influence and counterexample replay](functional-analysis.md)
 - [Reset-aware synchronous safety proofs and waveform replay](sequential-analysis.md)
