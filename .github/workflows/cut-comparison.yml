@@ -1,0 +1,82 @@
+name: Structural cut-language comparison
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cut-comparison-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - name: Install development tools
+        run: python -m pip install -e '.[dev]'
+      - name: Check algorithm against exhaustive reference and adversarial controls
+        run: |
+          mkdir -p cut-evidence
+          python -m pytest tests/test_cutcompare.py --junitxml=cut-evidence/tests.xml
+      - name: Compare and replay both changed and equivalent examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(--verilog examples/cutcompare/design.v --liberty examples/cutcompare/cells.lib --top top)
+          code=0
+          openconstraint-cut-compare compare "${common[@]}" \
+            --before examples/cutcompare/before.sdc --after examples/cutcompare/after.sdc \
+            --output cut-evidence/changed.json || code=$?
+          test "$code" -eq 1
+          openconstraint-cut-compare compare "${common[@]}" \
+            --before examples/cutcompare/after.sdc --after examples/cutcompare/equivalent.sdc \
+            --output cut-evidence/equivalent.json
+          openconstraint-cut-compare verify "${common[@]}" \
+            --before examples/cutcompare/before.sdc --after examples/cutcompare/after.sdc \
+            --report cut-evidence/changed.json --output cut-evidence/replay.json
+          python benchmarks/cutcompare.py --layers 45 --output cut-evidence/scale.json
+          openconstraint-cut-compare schema --output cut-evidence/schema.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          root = Path('cut-evidence')
+          schema = json.loads((root / 'schema.json').read_text())
+          validator = Draft202012Validator(schema)
+          for name in ('changed', 'equivalent'):
+              validator.validate(json.loads((root / f'{name}.json').read_text()))
+          scale = json.loads((root / 'scale.json').read_text())
+          validator.validate(scale['report'])
+          assert scale['structural_routes'] == str(2**45)
+          assert scale['report']['work']['states'] < 5000
+          assert json.loads((root / 'replay.json').read_text())['verified'] is True
+          PY
+      - name: Record exact source and tools
+        shell: bash
+        run: |
+          git rev-parse HEAD > cut-evidence/source-commit.txt
+          git rev-parse HEAD^{tree} > cut-evidence/source-tree.txt
+          python --version > cut-evidence/python-version.txt
+          python -m pip freeze > cut-evidence/python-dependencies.txt
+          cp examples/cutcompare/* cut-evidence/
+      - name: Preserve comparison, witnesses and reference evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: structural-cut-comparison-evidence
+          path: cut-evidence/
+          if-no-files-found: error
+          retention-days: 30

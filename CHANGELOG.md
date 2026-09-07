@@ -9,6 +9,12 @@ compatibility caveats documented in [GOVERNANCE.md](GOVERNANCE.md).
 
 ### Added
 
+- Exact, bounded union-of-structural-false-path comparison through
+  `openconstraint-cut-compare compare|verify|schema`, with shortest change
+  witnesses, separate setup/hold results, strict replay, and fail-closed CI gates.
+- Independent exhaustive path-enumeration controls for seeded small DAGs,
+  replay-tampering tests, and a layered reconvergent synthetic scale benchmark.
+
 - Replayable structural exception witnesses/vacuity analysis and inert,
   review-only repair plans through `openconstraint-prove`.
 - Experimental Boolean source-to-target influence analysis on flat Yosys JSON,

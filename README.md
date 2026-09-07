@@ -64,6 +64,28 @@ openconstraint audit \
   --min-coverage 90
 ```
 
+## What changed in the paths selected by false-path constraints?
+
+`openconstraint-cut-compare` compares the **union of structural paths selected**
+by two static SDC snapshots on the same design. It recognizes equivalent split,
+merged, reordered, and redundant exception declarations and emits a concrete
+newly cut or no-longer-cut path when the coverage differs. Ordered `-through`
+groups and setup/hold scopes are retained; resource exhaustion never becomes
+an equivalence result. This is **not full timing equivalence or false-path
+validity**. Clock-tagged and transition-qualified exception scopes are rejected.
+
+```console
+openconstraint-cut-compare compare \
+  --verilog examples/cutcompare/design.v --liberty examples/cutcompare/cells.lib \
+  --top top --before examples/cutcompare/before.sdc \
+  --after examples/cutcompare/after.sdc --output cut-change.json
+```
+
+This intentionally exits **1**: the candidate newly cuts the right-hand branch.
+Use `--fail-on new-cut` for a no-new-structural-cuts CI gate. Unresolved/bounded
+comparisons exit **2**, even with `--fail-on never`. See the
+[comparison contract, replay, and algorithm](docs/cut-comparison.md).
+
 ## Replayable evidence beyond lint
 
 `openconstraint-prove analyze` produces structural path witnesses and vacuity
