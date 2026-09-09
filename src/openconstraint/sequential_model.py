@@ -24,6 +24,7 @@ from openconstraint.functional import (
     _object,
     load_logic_model,
 )
+from openconstraint.hierarchy import HierarchyInputError, HierarchyLimitError, flatten_if_needed
 
 MODEL = "single_clock_synchronous_v1"
 
@@ -154,6 +155,12 @@ def _synchronous_primitive(kind: str) -> tuple[str, str, str | None, bool | None
 def load_synchronous_model(
     netlist: Mapping[str, Any], top: str, clock_ref: object, edge: str, limits: SequentialLimits
 ) -> SynchronousModel:
+    try:
+        netlist = flatten_if_needed(netlist, top, max_cells=limits.max_cells, max_bits=limits.max_bits)
+    except HierarchyLimitError as exc:
+        raise SequentialLimitError(str(exc)) from exc
+    except HierarchyInputError as exc:
+        raise FunctionalInputError(str(exc)) from exc
     modules = _object(netlist.get("modules"), "modules")
     module = _object(modules.get(top), "selected top")
     cells = _object(module.get("cells"), "cells")

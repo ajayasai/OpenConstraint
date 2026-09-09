@@ -13,6 +13,7 @@ is functionally valid.
 - [Bounded parameterized Tcl/SDC expansion](sdc-expansion.md)
 - [Proof-carrying structural exception analysis](proof-carrying-analysis.md)
 - [Experimental Boolean influence and counterexample replay](functional-analysis.md)
+- [Hierarchy-aware proof inputs and origin maps](hierarchy-elaboration.md)
 - [Reset-aware synchronous safety proofs and waveform replay](sequential-analysis.md)
 - [Rule reference](rules/index.md)
 - [Coverage methodology](coverage-methodology.md)

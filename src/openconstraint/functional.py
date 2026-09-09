@@ -22,6 +22,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
+from openconstraint.hierarchy import HierarchyInputError, HierarchyLimitError, flatten_if_needed
 from openconstraint.version import __version__
 
 MODEL = "zero_delay_arbitrary_state"
@@ -165,6 +166,12 @@ def _enabled(value: object) -> bool:
 
 
 def load_logic_model(netlist: Mapping[str, Any], top: str, limits: FunctionalLimits) -> LogicModel:
+    try:
+        netlist = flatten_if_needed(netlist, top, max_cells=limits.max_gates, max_bits=limits.max_bits)
+    except HierarchyLimitError as exc:
+        raise FunctionalLimitError(str(exc)) from exc
+    except HierarchyInputError as exc:
+        raise FunctionalInputError(str(exc)) from exc
     modules = _object(netlist.get("modules"), "modules")
     module = _object(modules.get(top), "selected top")
     attributes = _object(module.get("attributes", {}), "module attributes")

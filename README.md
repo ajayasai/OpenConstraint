@@ -269,3 +269,11 @@ endorsed by Synopsys, Cadence, Siemens EDA, Parallax Software, or the OpenROAD
 Project. Product names are trademarks of their respective owners.
 
 Licensed under [Apache-2.0](LICENSE).
+
+## Hierarchical proof inputs
+
+The Boolean and single-clock sequential checkers now automatically elaborate supported
+techmapped hierarchical Yosys JSON, preserving per-instance wire identity and explicit
+port bindings. [Hierarchy support and replayable origin maps](docs/hierarchy-elaboration.md) documents
+the export recipe, naming contract, limitations and native-reference validation.
+This does not add SDC promotion/demotion or timing signoff.

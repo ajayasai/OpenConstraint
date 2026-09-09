@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "model": "single_clock_synchronous_v1",
+  "top": "top",
+  "clock": "clk",
+  "edge": "posedge",
+  "prefix": [[{"signal": "reset", "value": 1}]],
+  "checks": [
+    {"id": "replicated-registers-agree", "kind": "forbid", "forbid": [{"signal": "bad_pair", "value": 1}]},
+    {"id": "negative-control-not-always-zero", "kind": "forbid", "forbid": [{"signal": {"net": "q_left", "bit": 0}, "value": 1}]}
+  ]
+}

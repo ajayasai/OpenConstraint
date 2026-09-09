@@ -1,0 +1,740 @@
+{
+  "creator": "hand-authored conformance fixture; not a Yosys export",
+  "modules": {
+    "lane2": {
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "direction": "input",
+          "bits": [
+            4,
+            5
+          ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [
+            10,
+            11
+          ]
+        }
+      },
+      "cells": {
+        "reset_mux0": {
+          "type": "$_MUX_",
+          "connections": {
+            "A": [
+              4
+            ],
+            "B": [
+              "0"
+            ],
+            "S": [
+              3
+            ],
+            "Y": [
+              20
+            ]
+          }
+        },
+        "ff0": {
+          "type": "$_DFF_P_",
+          "connections": {
+            "C": [
+              2
+            ],
+            "D": [
+              20
+            ],
+            "Q": [
+              10
+            ]
+          }
+        },
+        "reset_mux1": {
+          "type": "$_MUX_",
+          "connections": {
+            "A": [
+              5
+            ],
+            "B": [
+              "0"
+            ],
+            "S": [
+              3
+            ],
+            "Y": [
+              21
+            ]
+          }
+        },
+        "ff1": {
+          "type": "$_DFF_P_",
+          "connections": {
+            "C": [
+              2
+            ],
+            "D": [
+              21
+            ],
+            "Q": [
+              11
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "clk": {
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "bits": [
+            4,
+            5
+          ]
+        },
+        "q": {
+          "bits": [
+            10,
+            11
+          ]
+        }
+      },
+      "parameter_default_values": {
+        "W": "00000000000000000000000000000010"
+      }
+    },
+    "wrapper2": {
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "direction": "input",
+          "bits": [
+            4,
+            5
+          ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [
+            10,
+            11
+          ]
+        }
+      },
+      "cells": {
+        "capture": {
+          "type": "lane2",
+          "connections": {
+            "clk": [
+              2
+            ],
+            "reset": [
+              3
+            ],
+            "d": [
+              4,
+              5
+            ],
+            "q": [
+              10,
+              11
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "clk": {
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "bits": [
+            4,
+            5
+          ]
+        },
+        "q": {
+          "bits": [
+            10,
+            11
+          ]
+        }
+      }
+    },
+    "lane3": {
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "direction": "input",
+          "bits": [
+            4,
+            5,
+            6
+          ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [
+            10,
+            11,
+            12
+          ]
+        }
+      },
+      "cells": {
+        "reset_mux0": {
+          "type": "$_MUX_",
+          "connections": {
+            "A": [
+              4
+            ],
+            "B": [
+              "0"
+            ],
+            "S": [
+              3
+            ],
+            "Y": [
+              20
+            ]
+          }
+        },
+        "ff0": {
+          "type": "$_DFF_P_",
+          "connections": {
+            "C": [
+              2
+            ],
+            "D": [
+              20
+            ],
+            "Q": [
+              10
+            ]
+          }
+        },
+        "reset_mux1": {
+          "type": "$_MUX_",
+          "connections": {
+            "A": [
+              5
+            ],
+            "B": [
+              "0"
+            ],
+            "S": [
+              3
+            ],
+            "Y": [
+              21
+            ]
+          }
+        },
+        "ff1": {
+          "type": "$_DFF_P_",
+          "connections": {
+            "C": [
+              2
+            ],
+            "D": [
+              21
+            ],
+            "Q": [
+              11
+            ]
+          }
+        },
+        "reset_mux2": {
+          "type": "$_MUX_",
+          "connections": {
+            "A": [
+              6
+            ],
+            "B": [
+              "0"
+            ],
+            "S": [
+              3
+            ],
+            "Y": [
+              22
+            ]
+          }
+        },
+        "ff2": {
+          "type": "$_DFF_P_",
+          "connections": {
+            "C": [
+              2
+            ],
+            "D": [
+              22
+            ],
+            "Q": [
+              12
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "clk": {
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "bits": [
+            4,
+            5,
+            6
+          ]
+        },
+        "q": {
+          "bits": [
+            10,
+            11,
+            12
+          ]
+        }
+      },
+      "parameter_default_values": {
+        "W": "00000000000000000000000000000011"
+      }
+    },
+    "wrapper3": {
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "direction": "input",
+          "bits": [
+            4,
+            5,
+            6
+          ]
+        },
+        "q": {
+          "direction": "output",
+          "bits": [
+            10,
+            11,
+            12
+          ]
+        }
+      },
+      "cells": {
+        "capture": {
+          "type": "lane3",
+          "connections": {
+            "clk": [
+              2
+            ],
+            "reset": [
+              3
+            ],
+            "d": [
+              4,
+              5,
+              6
+            ],
+            "q": [
+              10,
+              11,
+              12
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "clk": {
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "bits": [
+            3
+          ]
+        },
+        "d": {
+          "bits": [
+            4,
+            5,
+            6
+          ]
+        },
+        "q": {
+          "bits": [
+            10,
+            11,
+            12
+          ]
+        }
+      }
+    },
+    "mix": {
+      "ports": {
+        "i": {
+          "direction": "input",
+          "bits": [
+            2,
+            3,
+            4
+          ]
+        },
+        "o": {
+          "direction": "output",
+          "bits": [
+            6
+          ]
+        }
+      },
+      "cells": {
+        "xor": {
+          "type": "$_XOR_",
+          "connections": {
+            "A": [
+              4
+            ],
+            "B": [
+              3
+            ],
+            "Y": [
+              5
+            ]
+          }
+        },
+        "and": {
+          "type": "$_AND_",
+          "connections": {
+            "A": [
+              5
+            ],
+            "B": [
+              2
+            ],
+            "Y": [
+              6
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "i": {
+          "bits": [
+            2,
+            3,
+            4
+          ]
+        },
+        "o": {
+          "bits": [
+            6
+          ]
+        }
+      }
+    },
+    "top": {
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "direction": "input",
+          "bits": [
+            3
+          ]
+        },
+        "a": {
+          "direction": "input",
+          "bits": [
+            4
+          ]
+        },
+        "b": {
+          "direction": "input",
+          "bits": [
+            5
+          ]
+        },
+        "c": {
+          "direction": "input",
+          "bits": [
+            6
+          ]
+        },
+        "q_left": {
+          "direction": "output",
+          "bits": [
+            10,
+            11
+          ]
+        },
+        "q_right": {
+          "direction": "output",
+          "bits": [
+            12,
+            13
+          ]
+        },
+        "q_wide": {
+          "direction": "output",
+          "bits": [
+            14,
+            15,
+            16
+          ]
+        },
+        "comb": {
+          "direction": "output",
+          "bits": [
+            17
+          ]
+        },
+        "bad_pair": {
+          "direction": "output",
+          "bits": [
+            20
+          ]
+        }
+      },
+      "cells": {
+        "left": {
+          "type": "wrapper2",
+          "connections": {
+            "clk": [
+              2
+            ],
+            "reset": [
+              3
+            ],
+            "d": [
+              5,
+              4
+            ],
+            "q": [
+              10,
+              11
+            ]
+          }
+        },
+        "right": {
+          "type": "wrapper2",
+          "connections": {
+            "clk": [
+              2
+            ],
+            "reset": [
+              3
+            ],
+            "d": [
+              5,
+              4
+            ],
+            "q": [
+              12,
+              13
+            ]
+          }
+        },
+        "wide": {
+          "type": "wrapper3",
+          "connections": {
+            "clk": [
+              2
+            ],
+            "reset": [
+              3
+            ],
+            "d": [
+              6,
+              5,
+              4
+            ],
+            "q": [
+              14,
+              15,
+              16
+            ]
+          }
+        },
+        "logic_mix": {
+          "type": "mix",
+          "connections": {
+            "i": [
+              6,
+              5,
+              4
+            ],
+            "o": [
+              17
+            ]
+          }
+        },
+        "diff0": {
+          "type": "$_XOR_",
+          "connections": {
+            "A": [
+              10
+            ],
+            "B": [
+              12
+            ],
+            "Y": [
+              18
+            ]
+          }
+        },
+        "diff1": {
+          "type": "$_XOR_",
+          "connections": {
+            "A": [
+              11
+            ],
+            "B": [
+              13
+            ],
+            "Y": [
+              19
+            ]
+          }
+        },
+        "or": {
+          "type": "$_OR_",
+          "connections": {
+            "A": [
+              18
+            ],
+            "B": [
+              19
+            ],
+            "Y": [
+              20
+            ]
+          }
+        }
+      },
+      "netnames": {
+        "clk": {
+          "bits": [
+            2
+          ]
+        },
+        "reset": {
+          "bits": [
+            3
+          ]
+        },
+        "a": {
+          "bits": [
+            4
+          ]
+        },
+        "b": {
+          "bits": [
+            5
+          ]
+        },
+        "c": {
+          "bits": [
+            6
+          ]
+        },
+        "q_left": {
+          "bits": [
+            10,
+            11
+          ]
+        },
+        "q_right": {
+          "bits": [
+            12,
+            13
+          ]
+        },
+        "q_wide": {
+          "bits": [
+            14,
+            15,
+            16
+          ]
+        },
+        "comb": {
+          "bits": [
+            17
+          ]
+        },
+        "bad_pair": {
+          "bits": [
+            20
+          ]
+        }
+      }
+    }
+  }
+}

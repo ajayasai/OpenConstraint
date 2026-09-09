@@ -139,7 +139,8 @@ Unknown cells, unexpected primitive parameters/ports, blackboxes, whiteboxes,
 unlowered processes, memories, latches, X/Z values, inout ports, undriven used
 signals, multiple drivers, and combinational cycles fail closed. Unsupported
 logic anywhere in the selected model invalidates it rather than being silently
-blackboxed. Flatten, lower, and technology-map the design before checking it;
+blackboxed. Lower and technology-map the design before checking it; supported module
+hierarchy is now elaborated automatically (see the hierarchy guide below);
 unsupported constructs still require an explicit model extension and tests.
 
 ## Limits, provenance, and output safety
@@ -200,3 +201,11 @@ This module is an implemented first Boolean evidence layer, not completion of
 Primary format and solver references:
 [Yosys JSON format](https://yosyshq.readthedocs.io/projects/yosys/en/v0.52/cmd/write_json.html)
 and [Z3 Python guide](https://microsoft.github.io/z3guide/programming/Z3%20Python/Introduction/).
+
+## Hierarchical proof inputs
+
+The Boolean and single-clock sequential checkers now automatically elaborate supported
+techmapped hierarchical Yosys JSON, preserving per-instance wire identity and explicit
+port bindings. [Hierarchy support and replayable origin maps](hierarchy-elaboration.md) documents
+the export recipe, naming contract, limitations and native-reference validation.
+This does not add SDC promotion/demotion or timing signoff.

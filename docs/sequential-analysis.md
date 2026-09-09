@@ -199,3 +199,11 @@ A proof may be unbounded in time and still be narrow in its modeling scope.
 References: [Yosys gate-level flip-flop semantics](https://yosyshq.readthedocs.io/projects/yosys/en/latest/cell/gate_reg_ff.html),
 [Yosys SAT command](https://yosyshq.readthedocs.io/projects/yosys/en/v0.49/cmd/sat.html),
 and [SBY bounded versus unbounded proof modes](https://symbiyosys.readthedocs.io/en/latest/reference.html).
+
+## Hierarchical proof inputs
+
+The Boolean and single-clock sequential checkers now automatically elaborate supported
+techmapped hierarchical Yosys JSON, preserving per-instance wire identity and explicit
+port bindings. [Hierarchy support and replayable origin maps](hierarchy-elaboration.md) documents
+the export recipe, naming contract, limitations and native-reference validation.
+This does not add SDC promotion/demotion or timing signoff.

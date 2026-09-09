@@ -60,6 +60,7 @@ openconstraint-prove = "openconstraint.proof:main"
 openconstraint-functional = "openconstraint.functional:main"
 openconstraint-sequential = "openconstraint.sequential_cli:main"
 openconstraint-expand = "openconstraint.expand:main"
+openconstraint-hierarchy = "openconstraint.hierarchy_cli:main"
 openconstraint-cut-compare = "openconstraint.cutcompare_cli:main"
 
 [project.urls]

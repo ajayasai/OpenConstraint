@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0.0",
+  "model": "zero_delay_arbitrary_state",
+  "top": "top",
+  "checks": [
+    {"id": "disabled-cone", "sources": ["a"], "targets": ["comb"], "assumptions": [{"signal": "c", "value": 0}]},
+    {"id": "enabled-cone", "sources": ["a"], "targets": ["comb"], "assumptions": [{"signal": "c", "value": 1}]}
+  ]
+}
