@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "model": "single_clock_synchronous_v1",
+  "top": "top",
+  "clock": "clk",
+  "edge": "posedge",
+  "prefix": [[{"signal": "reset", "value": 1}]],
+  "checks": [
+    {"id": "capture-spacing-2", "kind": "min_spacing", "event": "phase", "cycles": 2},
+    {"id": "invalid-spacing-3", "kind": "min_spacing", "event": "phase", "cycles": 3},
+    {"id": "captured-pair-coherent", "kind": "forbid", "forbid": [{"signal": "bad_equal", "value": 1}]}
+  ]
+}

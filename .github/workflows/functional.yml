@@ -1,0 +1,77 @@
+name: Boolean influence differential validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: functional-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - name: Install checker and real synthesis engine
+        run: |
+          python -m pip install -e '.[dev,formal]'
+          sudo apt-get update -qq
+          sudo apt-get install -y yosys
+      - name: Differential primitive and generated-circuit tests
+        run: |
+          python -c 'import z3; print(z3.get_version_string())'
+          pytest tests/test_functional.py tests/test_proof_repairs.py
+      - name: Synthesize the repository-owned example
+        run: |
+          mkdir -p build/functional
+          yosys -V > build/functional/yosys-version.txt
+          python -c 'import z3; print(z3.get_version_string())' > build/functional/z3-version.txt
+          yosys -l build/functional/yosys.log -p 'read_verilog examples/functional/design.v; hierarchy -check -top top; proc; flatten; opt; techmap; opt; write_json build/functional/netlist.json'
+      - name: Reproduce both decisions using independent backends
+        shell: bash
+        run: |
+          set -euo pipefail
+          for backend in z3 enumerate; do
+            rc=0
+            openconstraint-functional analyze \
+              --netlist build/functional/netlist.json \
+              --spec examples/functional/checks.json \
+              --backend "$backend" --output "build/functional/$backend.json" || rc=$?
+            test "$rc" -eq 1  # Deliberate dependent control, NOT arbitrary failure suppression.
+          done
+          openconstraint-functional verify \
+            --netlist build/functional/netlist.json --spec examples/functional/checks.json \
+            --report build/functional/z3.json --backend enumerate --output build/functional/replay.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from importlib.resources import files
+          from jsonschema import Draft202012Validator
+          schema = json.loads((files('openconstraint.schemas') / 'openconstraint-functional-result.schema.json').read_text())
+          for backend in ('z3', 'enumerate'):
+              report = json.loads(Path(f'build/functional/{backend}.json').read_text())
+              Draft202012Validator(schema).validate(report)
+              assert report['summary'] == {'dependent': 1, 'independent': 1}
+              assert report['timing_signoff'] is False
+          replay = json.loads(Path('build/functional/replay.json').read_text())
+          assert replay['verified'] is True and replay['all_independent'] is False
+          PY
+      - name: Preserve exact synthesis and verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: boolean-influence-evidence
+          path: build/functional/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-sequential-result.schema.json",
+  "title": "OpenConstraint synchronous safety result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "algorithm": {"const": "synchronous-safety-v1"},
+    "model": {"const": "single_clock_synchronous_v1"},
+    "timing_signoff": {"const": false},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"const": "OpenConstraint"},
+        "version": {"type": "string", "minLength": 1}
+      },
+      "required": ["name", "version"]
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"enum": ["enumerate", "z3"]},
+        "version": {"type": "string", "minLength": 1}
+      },
+      "required": ["name", "version"]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_cells": {"type": "integer", "minimum": 1},
+        "max_bits": {"type": "integer", "minimum": 1},
+        "max_checks": {"type": "integer", "minimum": 1},
+        "max_depth": {"type": "integer", "minimum": 1, "maximum": 256},
+        "max_prefix": {"type": "integer", "minimum": 1, "maximum": 256},
+        "max_history": {"type": "integer", "minimum": 1, "maximum": 256},
+        "max_state_bits": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "max_enum_free_bits": {"type": "integer", "minimum": 1, "maximum": 24},
+        "max_states": {"type": "integer", "minimum": 1},
+        "max_work": {"type": "integer", "minimum": 1},
+        "max_solver_calls": {"type": "integer", "minimum": 1},
+        "solver_timeout_ms": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "solver_rlimit": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+      },
+      "required": ["max_cells", "max_bits", "max_checks", "max_depth", "max_prefix", "max_history", "max_state_bits", "max_enum_free_bits", "max_states", "max_work", "max_solver_calls", "solver_timeout_ms", "solver_rlimit"]
+    },
+    "netlist_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "specification_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sdc_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "required": ["id", "sha256"]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proven": {"type": "integer", "minimum": 1},
+        "counterexample": {"type": "integer", "minimum": 1},
+        "bounded": {"type": "integer", "minimum": 1},
+        "unsupported": {"type": "integer", "minimum": 1},
+        "inconsistent_assumptions": {"type": "integer", "minimum": 1}
+      },
+      "required": []
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "query_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "cone": {
+            "anyOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "state_bits": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": true},
+                  "input_bits": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": true},
+                  "history_bits": {"type": "integer", "minimum": 0},
+                  "gate_count": {"type": "integer", "minimum": 0}
+                },
+                "required": ["state_bits", "input_bits", "history_bits", "gate_count"]
+              }
+            ]
+          },
+          "binding": {
+            "anyOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "source": {"type": "string", "minLength": 1, "maxLength": 200},
+                  "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "command_index": {"type": "integer", "minimum": 0},
+                  "command": {"enum": ["set_false_path", "set_multicycle_path", "set_min_delay", "set_max_delay", "set_clock_groups"]},
+                  "command_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "line": {"type": "integer", "minimum": 1},
+                  "role": {"const": "review_property_link"},
+                  "exception_validated": {"const": false}
+                },
+                "required": ["source", "sha256", "command_index", "command", "command_sha256", "line", "role", "exception_validated"]
+              }
+            ]
+          },
+          "status": {"enum": ["proven", "counterexample", "bounded", "unsupported", "inconsistent_assumptions"]},
+          "reason": {"type": "string"},
+          "checked_depth": {"type": "integer", "minimum": -1},
+          "proof": {
+            "anyOf": [
+              {"type": "null"},
+              {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {"const": "reachable_invariant"},
+                      "states": {"type": "array", "items": {"type": "string", "pattern": "^[01]*$"}, "minItems": 1, "uniqueItems": true}
+                    },
+                    "required": ["kind", "states"]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {"const": "k_induction"},
+                      "k": {"type": "integer", "minimum": 1, "maximum": 256}
+                    },
+                    "required": ["kind", "k"]
+                  }
+                ]
+              }
+            ]
+          },
+          "counterexample": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/trace"}]},
+          "activation": {"enum": ["not_applicable", "witnessed", "unreachable", "not_witnessed"]},
+          "activation_witness": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/trace"}]}
+        },
+        "required": ["id", "query_digest", "cone", "binding", "status", "reason", "checked_depth", "proof", "counterexample", "activation", "activation_witness"]
+      },
+      "minItems": 1
+    },
+    "passed": {"type": "boolean"},
+    "report_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "required": ["schema_version", "algorithm", "model", "timing_signoff", "tool", "backend", "limits", "netlist_digest", "specification_digest", "sdc_sources", "summary", "checks", "passed", "report_digest"],
+  "$defs": {
+    "trace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "state": {"type": "array", "items": {"type": "integer", "enum": [0, 1]}},
+          "inputs": {"type": "array", "items": {"type": "integer", "enum": [0, 1]}},
+          "observed": {"type": "array", "items": {"type": "integer", "enum": [0, 1]}}
+        },
+        "required": ["state", "inputs", "observed"]
+      },
+      "minItems": 1
+    }
+  }
+}

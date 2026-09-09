@@ -64,6 +64,45 @@ openconstraint audit \
   --min-coverage 90
 ```
 
+## What changed in the paths selected by false-path constraints?
+
+`openconstraint-cut-compare` compares the **union of structural paths selected**
+by two static SDC snapshots on the same design. It recognizes equivalent split,
+merged, reordered, and redundant exception declarations and emits a concrete
+newly cut or no-longer-cut path when the coverage differs. Ordered `-through`
+groups and setup/hold scopes are retained; resource exhaustion never becomes
+an equivalence result. This is **not full timing equivalence or false-path
+validity**. Clock-tagged and transition-qualified exception scopes are rejected.
+
+```console
+openconstraint-cut-compare compare \
+  --verilog examples/cutcompare/design.v --liberty examples/cutcompare/cells.lib \
+  --top top --before examples/cutcompare/before.sdc \
+  --after examples/cutcompare/after.sdc --output cut-change.json
+```
+
+This intentionally exits **1**: the candidate newly cuts the right-hand branch.
+Use `--fail-on new-cut` for a no-new-structural-cuts CI gate. Unresolved/bounded
+comparisons exit **2**, even with `--fail-on never`. See the
+[comparison contract, replay, and algorithm](docs/cut-comparison.md).
+
+## Replayable evidence beyond lint
+
+`openconstraint-prove analyze` produces structural path witnesses and vacuity
+certificates, with review-only repair proposals and independent replay. Clock
+reachability is reused within each mode rather than recomputed for every
+exception. Use `--fail-on inconclusive` to reject unresolved or resource-bounded
+analysis, including an untrusted mode with no modeled exceptions.
+
+The separate experimental `openconstraint-functional` command checks Boolean
+influence on flat Yosys JSON using optional Z3 or a built-in exhaustive backend.
+It emits concrete counterexamples, rejects contradictory assumptions, and
+supports cross-backend replay. **Boolean independence is not delay-aware timing
+false-path proof**, and this command never generates SDC exceptions.
+
+See [structural evidence](docs/proof-carrying-analysis.md) and
+[Boolean evidence, examples, and limits](docs/functional-analysis.md).
+
 ## What the beta checks
 
 - Malformed Tcl grouping or modeled-command grammar without evaluating the Tcl
@@ -230,3 +269,11 @@ endorsed by Synopsys, Cadence, Siemens EDA, Parallax Software, or the OpenROAD
 Project. Product names are trademarks of their respective owners.
 
 Licensed under [Apache-2.0](LICENSE).
+
+## Hierarchical proof inputs
+
+The Boolean and single-clock sequential checkers now automatically elaborate supported
+techmapped hierarchical Yosys JSON, preserving per-instance wire identity and explicit
+port bindings. [Hierarchy support and replayable origin maps](docs/hierarchy-elaboration.md) documents
+the export recipe, naming contract, limitations and native-reference validation.
+This does not add SDC promotion/demotion or timing signoff.

@@ -1,0 +1,92 @@
+name: Bounded Tcl/SDC expansion validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: expansion-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - name: Install explicit test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tcl
+          python -m pip install -e '.[dev]'
+      - name: Validate the subset against native Tcl
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p expansion-evidence
+          command -v tclsh
+          echo 'puts [info patchlevel]' | tclsh > expansion-evidence/tcl-version.txt
+          python -m pytest tests/test_expand.py tests/test_expand_reference.py \
+            --junitxml=expansion-evidence/tests.xml
+      - name: Expand, replay, and audit both declared modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in functional slow; do
+            openconstraint-expand compile \
+              --source main=examples/expansion/main.sdc \
+              --source clock_helpers.sdc=examples/expansion/clock_helpers.sdc \
+              --entry main --define "MODE=$mode" \
+              --output "expansion-evidence/$mode"
+            openconstraint-expand verify \
+              --source main=examples/expansion/main.sdc \
+              --source clock_helpers.sdc=examples/expansion/clock_helpers.sdc \
+              --entry main --define "MODE=$mode" \
+              --pack "expansion-evidence/$mode" > "expansion-evidence/$mode-replay.json"
+            openconstraint audit \
+              --verilog examples/tiny/design.v --liberty examples/tiny/cells.lib \
+              --sdc "expansion-evidence/$mode/normalized.sdc" --top tiny_top \
+              --min-coverage 100 --fail-on error --format all \
+              --output "expansion-evidence/$mode-audit"
+          done
+          openconstraint-expand schema --output expansion-evidence/expansion.schema.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          root = Path('expansion-evidence')
+          schema = json.loads((root / 'expansion.schema.json').read_text())
+          Draft202012Validator.check_schema(schema)
+          validator = Draft202012Validator(schema)
+          for mode in ('functional', 'slow'):
+              validator.validate(json.loads((root / mode / 'provenance.json').read_text()))
+              assert json.loads((root / f'{mode}-replay.json').read_text())['verified'] is True
+          PY
+      - name: Record exact source and tool identities
+        shell: bash
+        run: |
+          git rev-parse HEAD > expansion-evidence/source-commit.txt
+          git rev-parse HEAD^{tree} > expansion-evidence/source-tree.txt
+          python --version > expansion-evidence/python-version.txt
+          python -m pip freeze > expansion-evidence/python-dependencies.txt
+          cp examples/expansion/*.sdc expansion-evidence/
+      - name: Preserve source, provenance, replay and audit results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bounded-sdc-expansion-evidence
+          path: expansion-evidence/
+          if-no-files-found: error
+          retention-days: 30

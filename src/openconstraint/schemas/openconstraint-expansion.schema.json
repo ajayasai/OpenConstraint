@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenConstraint bounded SDC expansion provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "algorithm",
+    "tool_version",
+    "status",
+    "timing_signoff",
+    "design_queries_executed",
+    "entries",
+    "defines",
+    "sources",
+    "limits",
+    "metrics",
+    "commands",
+    "sdc",
+    "sdc_sha256",
+    "digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "algorithm": {
+      "const": "bounded-symbolic-tcl-v1"
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "status": {
+      "const": "complete"
+    },
+    "timing_signoff": {
+      "const": false
+    },
+    "design_queries_executed": {
+      "const": false
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "string"
+      }
+    },
+    "defines": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sha256",
+          "used"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "used": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_source_bytes",
+        "max_steps",
+        "max_iterations",
+        "max_commands",
+        "max_output_bytes",
+        "max_value_chars",
+        "max_live_chars",
+        "max_work_chars",
+        "max_depth",
+        "max_variables",
+        "max_procedures",
+        "max_sources",
+        "max_list_elements"
+      ],
+      "properties": {
+        "max_source_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "max_commands": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        },
+        "max_value_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "max_live_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "max_work_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 33554432
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "max_variables": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "max_procedures": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "max_sources": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "max_list_elements": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "steps",
+        "iterations",
+        "emitted_commands",
+        "work_chars"
+      ],
+      "properties": {
+        "steps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emitted_commands": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "work_chars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "sdc",
+          "origin"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sdc": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "source",
+                "enclosing_line",
+                "operation",
+                "iteration"
+              ],
+              "properties": {
+                "source": {
+                  "type": "string"
+                },
+                "enclosing_line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "iteration": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "sdc": {
+      "type": "string"
+    },
+    "sdc_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

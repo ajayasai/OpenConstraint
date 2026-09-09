@@ -1,0 +1,55 @@
+name: Hierarchy elaboration and native flatten validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hierarchy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - name: Install explicit conformance tools
+        run: |
+          python -m pip install -e '.[dev,formal]'
+          python -c 'import z3; print(z3.get_version_string())'
+          sudo apt-get update -qq
+          sudo apt-get install -y yosys
+      - name: Test hierarchy, corruption, resource bounds and model integration
+        run: |
+          mkdir -p build/hierarchy-evidence
+          pytest tests/test_hierarchy.py --junitxml=build/hierarchy-evidence/tests.xml
+      - name: Require native synthesis, flattening and SAT controls
+        run: python examples/hierarchy/validate.py --yosys --output build/hierarchy-evidence/native
+      - name: Measure repeat-instance expansion without conflating it with proof scale
+        run: python benchmarks/hierarchy.py --sizes 1000,5000 --output build/hierarchy-evidence/scale.json
+      - name: Record exact tested tree and tools
+        if: always()
+        run: |
+          mkdir -p build/hierarchy-evidence
+          git rev-parse HEAD > build/hierarchy-evidence/commit.txt
+          git rev-parse 'HEAD^{tree}' > build/hierarchy-evidence/tree.txt
+          git ls-tree -r HEAD > build/hierarchy-evidence/source-tree.txt
+          python -m pip freeze > build/hierarchy-evidence/dependencies.txt
+      - name: Preserve native exports, reports, maps, waveforms and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hierarchy-elaboration-evidence
+          path: build/hierarchy-evidence/
+          if-no-files-found: error
+          retention-days: 30

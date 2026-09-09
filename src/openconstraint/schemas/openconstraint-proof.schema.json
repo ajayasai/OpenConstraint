@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-proof.schema.json",
+  "title": "OpenConstraint proof pack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "algorithm",
+    "limits",
+    "model",
+    "summary",
+    "modes",
+    "replay_digest",
+    "pack_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "OpenConstraint"},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "algorithm": {"const": "ordered-structural-path-v1"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_graph_edges", "max_search_states", "max_witness_nodes"],
+      "properties": {
+        "max_graph_edges": {"type": "integer", "minimum": 1},
+        "max_search_states": {"type": "integer", "minimum": 1},
+        "max_witness_nodes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top",
+        "trusted",
+        "parser_warnings",
+        "node_count",
+        "edge_count",
+        "graph_digest"
+      ],
+      "properties": {
+        "top": {"type": "string"},
+        "trusted": {"type": "boolean"},
+        "parser_warnings": {"type": "array", "items": {"type": "string"}},
+        "node_count": {"type": "integer", "minimum": 0},
+        "edge_count": {"type": "integer", "minimum": 0},
+        "graph_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "summary": {"$ref": "#/$defs/statusCounts"},
+    "modes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "trusted_model", "summary", "proofs"],
+        "properties": {
+          "name": {"type": "string"},
+          "trusted_model": {"type": "boolean"},
+          "summary": {"$ref": "#/$defs/statusCounts"},
+          "proofs": {"type": "array", "items": {"$ref": "#/$defs/proof"}}
+        }
+      }
+    },
+    "replay_digest": {"$ref": "#/$defs/sha256"},
+    "pack_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "column"],
+      "properties": {
+        "path": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1},
+        "column": {"type": "integer", "minimum": 1}
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {"enum": ["port", "pin", "net"]},
+        "name": {"type": "string"}
+      }
+    },
+    "scopeKinds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "through"],
+      "properties": {
+        "from": {"type": ["string", "null"]},
+        "to": {"type": ["string", "null"]},
+        "through": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "statusCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["witnessed", "vacuous", "unresolved", "bounded"],
+      "properties": {
+        "witnessed": {"type": "integer", "minimum": 0},
+        "vacuous": {"type": "integer", "minimum": 0},
+        "unresolved": {"type": "integer", "minimum": 0},
+        "bounded": {"type": "integer", "minimum": 0}
+      }
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "kind",
+        "mode",
+        "location",
+        "raw",
+        "scope_kinds",
+        "exception_digest",
+        "algorithm",
+        "graph_digest",
+        "status",
+        "reason",
+        "visited_states",
+        "visited_digest",
+        "witness",
+        "witness_omitted_nodes",
+        "certificate_id"
+      ],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "kind": {"type": "string"},
+        "mode": {"type": "string"},
+        "location": {"$ref": "#/$defs/location"},
+        "raw": {"type": "string"},
+        "scope_kinds": {
+          "oneOf": [
+            {"$ref": "#/$defs/scopeKinds"},
+            {"type": "null"}
+          ]
+        },
+        "exception_digest": {"$ref": "#/$defs/sha256"},
+        "algorithm": {"const": "ordered-structural-path-v1"},
+        "graph_digest": {"$ref": "#/$defs/sha256"},
+        "status": {"enum": ["witnessed", "vacuous", "unresolved", "bounded"]},
+        "reason": {"type": ["string", "null"]},
+        "source_node_count": {"type": "integer", "minimum": 0},
+        "target_node_count": {"type": "integer", "minimum": 0},
+        "through_group_count": {"type": "integer", "minimum": 0},
+        "visited_states": {"type": "integer", "minimum": 0},
+        "visited_digest": {
+          "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        },
+        "witness": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+        "witness_node_count": {"type": "integer", "minimum": 0},
+        "witness_omitted_nodes": {"type": "integer", "minimum": 0},
+        "certificate_id": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

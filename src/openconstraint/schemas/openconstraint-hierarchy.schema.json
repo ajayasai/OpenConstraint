@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ajayasai.github.io/OpenConstraint/schemas/openconstraint-hierarchy.schema.json",
+  "title": "OpenConstraint source-bound hierarchy elaboration",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "algorithm": {
+      "const": "hierarchical-bit-connectivity-v1"
+    },
+    "contract": {
+      "const": {
+        "input": "already-elaborated-techmapped-Yosys-JSON",
+        "hierarchical_names": "slash-prefixed-JSON-pointer-components; top names unchanged",
+        "constants": "two-state-only",
+        "unresolved_parameters": "rejected",
+        "unknown_cells": "rejected",
+        "timing_signoff": false,
+        "rtl_elaboration": false,
+        "functional_property_proof": false,
+        "clock_relationships_inferred": false
+      }
+    },
+    "top": {
+      "type": "string"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_source_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "max_instances": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "max_leaf_cells": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_wires": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400000
+        },
+        "max_alias_bits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000000
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "max_name_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        }
+      },
+      "required": [
+        "max_source_bytes",
+        "max_instances",
+        "max_leaf_cells",
+        "max_wires",
+        "max_alias_bits",
+        "max_depth",
+        "max_name_chars",
+        "max_output_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "netlist": {
+      "type": "object",
+      "required": [
+        "creator",
+        "modules"
+      ],
+      "properties": {
+        "creator": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "attributes": {
+                "type": "object"
+              },
+              "parameter_default_values": {
+                "type": "object"
+              },
+              "ports": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "direction": {
+                      "enum": [
+                        "input",
+                        "output"
+                      ]
+                    },
+                    "bits": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 2147483647
+                          },
+                          {
+                            "enum": [
+                              "0",
+                              "1"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "upto": {
+                      "type": "integer"
+                    },
+                    "signed": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "direction",
+                    "bits"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "netnames": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "hide_name": {
+                      "type": "integer"
+                    },
+                    "bits": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 2147483647
+                          },
+                          {
+                            "enum": [
+                              "0",
+                              "1"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "attributes": {
+                      "type": "object"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "upto": {
+                      "type": "integer"
+                    },
+                    "signed": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "bits"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "cells": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "connections": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 2147483647
+                            },
+                            {
+                              "enum": [
+                                "0",
+                                "1"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "port_directions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "enum": [
+                          "input",
+                          "output"
+                        ]
+                      }
+                    },
+                    "hide_name": {
+                      "type": "integer"
+                    },
+                    "parameters": {
+                      "type": "object"
+                    },
+                    "attributes": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "connections"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "attributes",
+              "parameter_default_values",
+              "ports",
+              "netnames",
+              "cells"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "netlist_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "instances": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "module": {
+                "type": "string"
+              },
+              "attributes": {
+                "type": "object"
+              },
+              "instance_attributes": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "path",
+              "module",
+              "attributes",
+              "instance_attributes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "flat_name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "module": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "flat_name",
+              "path",
+              "module",
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "flat_name": {
+                "type": "string"
+              },
+              "instance_path": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "module": {
+                "type": "string"
+              },
+              "bits": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "enum": [
+                        "0",
+                        "1"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "flat_name",
+              "instance_path",
+              "module",
+              "bits"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "top_bit_map": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "original": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "flat": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "enum": [
+                      "0",
+                      "1"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "original",
+              "flat"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "unused_modules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "instances": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "leaf_cells": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "instance_wires": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "flat_wires": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "alias_bits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "charged_metadata_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "signal_names": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "instances",
+            "leaf_cells",
+            "instance_wires",
+            "flat_wires",
+            "alias_bits",
+            "charged_metadata_bytes",
+            "signal_names"
+          ],
+          "additionalProperties": false
+        },
+        "primitive_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "required": [
+        "instances",
+        "cells",
+        "signals",
+        "top_bit_map",
+        "unused_modules",
+        "counts",
+        "primitive_counts"
+      ],
+      "additionalProperties": false
+    },
+    "pack_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "algorithm",
+    "contract",
+    "top",
+    "source_digest",
+    "limits",
+    "netlist",
+    "netlist_digest",
+    "provenance",
+    "pack_digest"
+  ],
+  "additionalProperties": false
+}

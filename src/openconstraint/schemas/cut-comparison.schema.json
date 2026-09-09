@@ -1,0 +1,852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ajayasai/OpenConstraint/schemas/cut-comparison/1.0.0",
+  "title": "OpenConstraint structural false-path comparison (not timing equivalence)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "algorithm",
+    "tool",
+    "contract",
+    "limits",
+    "source_hashes",
+    "design",
+    "rules",
+    "checks",
+    "status",
+    "complete",
+    "reason",
+    "work",
+    "report_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "algorithm": {
+      "const": "structural-cut-language-product-v1"
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "OpenConstraint"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "contract": {
+      "const": {
+        "model": "directed-structural-walks-with-ordered-through-groups",
+        "endpoints": "input-ports/register-outputs to output-ports/register-data-pins",
+        "analysis_senses": [
+          "setup",
+          "hold"
+        ],
+        "transition_qualified_scopes": false,
+        "clock_tagged_scopes": false,
+        "sequential_state_crossed": false,
+        "timing_equivalence": false,
+        "timing_signoff": false,
+        "functional_exception_validity": false,
+        "excluded_semantics": [
+          "clock timing",
+          "I/O delay values",
+          "path delays",
+          "functional sensitization"
+        ]
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_source_bytes",
+        "max_graph_nodes",
+        "max_graph_edges",
+        "max_rules",
+        "max_commands",
+        "max_through_groups",
+        "max_selector_nodes",
+        "max_states",
+        "max_state_cells",
+        "max_steps",
+        "max_witness_nodes"
+      ],
+      "properties": {
+        "max_source_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "max_graph_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "max_graph_edges": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500000
+        },
+        "max_rules": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "max_commands": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "max_through_groups": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "max_selector_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500000
+        },
+        "max_states": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_state_cells": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000000
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000000
+        },
+        "max_witness_nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        }
+      }
+    },
+    "source_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "before": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "after": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top",
+        "graph_digest",
+        "endpoint_digest",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "top": {
+          "type": "string"
+        },
+        "graph_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endpoint_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edges": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rule"
+          },
+          "maxItems": 128
+        },
+        "after": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rule"
+          },
+          "maxItems": 128
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "setup",
+        "hold"
+      ],
+      "properties": {
+        "setup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "new_cuts",
+            "removed_cuts"
+          ],
+          "properties": {
+            "new_cuts": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/outcome"
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "const": "witnessed"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "matched_before": {
+                        "maxItems": 0
+                      },
+                      "matched_after": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "removed_cuts": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/outcome"
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "const": "witnessed"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "matched_before": {
+                        "minItems": 1
+                      },
+                      "matched_after": {
+                        "maxItems": 0
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "hold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "new_cuts",
+            "removed_cuts"
+          ],
+          "properties": {
+            "new_cuts": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/outcome"
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "const": "witnessed"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "matched_before": {
+                        "maxItems": 0
+                      },
+                      "matched_after": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "removed_cuts": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/outcome"
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "const": "witnessed"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "matched_before": {
+                        "minItems": 1
+                      },
+                      "matched_after": {
+                        "maxItems": 0
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "equivalent_structural_cuts",
+        "different_structural_cuts",
+        "bounded",
+        "unresolved"
+      ]
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "states",
+        "state_cells",
+        "steps",
+        "selector_nodes",
+        "rules",
+        "commands"
+      ],
+      "properties": {
+        "states": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state_cells": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selector_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commands": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "report_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "complete": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "equivalent_structural_cuts",
+              "different_structural_cuts"
+            ]
+          },
+          "reason": {
+            "type": "null"
+          },
+          "source_hashes": {
+            "required": [
+              "before",
+              "after"
+            ]
+          },
+          "design": {
+            "properties": {
+              "graph_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "endpoint_digest": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "checks": {
+            "properties": {
+              "setup": {
+                "properties": {
+                  "new_cuts": {
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "witnessed",
+                          "absent"
+                        ]
+                      }
+                    }
+                  },
+                  "removed_cuts": {
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "witnessed",
+                          "absent"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "hold": {
+                "properties": {
+                  "new_cuts": {
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "witnessed",
+                          "absent"
+                        ]
+                      }
+                    }
+                  },
+                  "removed_cuts": {
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "witnessed",
+                          "absent"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "status": {
+            "enum": [
+              "bounded",
+              "unresolved"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "equivalent_structural_cuts"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "complete": {
+            "const": true
+          },
+          "checks": {
+            "properties": {
+              "setup": {
+                "properties": {
+                  "new_cuts": {
+                    "properties": {
+                      "status": {
+                        "const": "absent"
+                      }
+                    }
+                  },
+                  "removed_cuts": {
+                    "properties": {
+                      "status": {
+                        "const": "absent"
+                      }
+                    }
+                  }
+                }
+              },
+              "hold": {
+                "properties": {
+                  "new_cuts": {
+                    "properties": {
+                      "status": {
+                        "const": "absent"
+                      }
+                    }
+                  },
+                  "removed_cuts": {
+                    "properties": {
+                      "status": {
+                        "const": "absent"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "different_structural_cuts"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "checks": {
+                "properties": {
+                  "setup": {
+                    "properties": {
+                      "new_cuts": {
+                        "properties": {
+                          "status": {
+                            "const": "witnessed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "properties": {
+                  "setup": {
+                    "properties": {
+                      "removed_cuts": {
+                        "properties": {
+                          "status": {
+                            "const": "witnessed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "properties": {
+                  "hold": {
+                    "properties": {
+                      "new_cuts": {
+                        "properties": {
+                          "status": {
+                            "const": "witnessed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "checks": {
+                "properties": {
+                  "hold": {
+                    "properties": {
+                      "removed_cuts": {
+                        "properties": {
+                          "status": {
+                            "const": "witnessed"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "port",
+            "pin",
+            "net"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason",
+        "witness",
+        "matched_before",
+        "matched_after"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "witnessed",
+            "absent",
+            "bounded",
+            "unresolved"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "witness": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "maxItems": 4096
+        },
+        "matched_before": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uniqueItems": true
+        },
+        "matched_after": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "witnessed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "witness": {
+                "minItems": 1
+              },
+              "reason": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "witness": {
+                "maxItems": 0
+              },
+              "matched_before": {
+                "maxItems": 0
+              },
+              "matched_after": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "line",
+        "raw",
+        "scope"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sources",
+            "targets",
+            "through",
+            "senses"
+          ],
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              },
+              "uniqueItems": true
+            },
+            "targets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              },
+              "uniqueItems": true
+            },
+            "through": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/node"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "maxItems": 32
+            },
+            "senses": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "setup",
+                  "hold"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 2,
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
