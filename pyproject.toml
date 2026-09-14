@@ -27,7 +27,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
-  "build==1.6.0",
+  "build==1.6.1",
   "hypothesis>=6.167.1",
   "jsonschema>=4.23",
   "mypy>=1.15",
